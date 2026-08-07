@@ -1,0 +1,6 @@
+# Development dependencies for InsightFlow-AI
+black
+ruff
+isort
+pytest
+pre-commit

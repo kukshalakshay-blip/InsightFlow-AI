@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.env
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# Data
+data/raw/
+data/processed/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
