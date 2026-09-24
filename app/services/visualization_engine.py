@@ -1,57 +1,122 @@
 import pandas as pd
 
+from app.services.column_intelligence import analyze_columns
+
 
 def recommend_visualizations(
     df: pd.DataFrame,
     max_recommendations: int = 10,
 ) -> list[dict]:
     """
-    Recommend and rank useful visualizations based on dataset structure.
-
-    The function is dataset-agnostic and works with different combinations
-    of numeric and categorical columns.
+    Recommend and rank useful visualizations based on
+    semantic understanding of the dataset.
     """
 
     recommendations = []
 
-    # --------------------------------------------------
-    # Detect column types
-    # --------------------------------------------------
+    # ==================================================
+    # 1. UNDERSTAND THE COLUMNS
+    # ==================================================
 
-    numeric_columns = df.select_dtypes(
-        include="number"
-    ).columns.tolist()
-
-    categorical_columns = df.select_dtypes(
-        include=["object", "category", "bool"]
-    ).columns.tolist()
+    column_information = analyze_columns(df)
 
     # --------------------------------------------------
-    # Single numeric columns
+    # Numeric measurements
     # --------------------------------------------------
 
-    for column in numeric_columns:
-        recommendations.append(
-            {
-                "type": "histogram",
-                "column": column,
-                "score": 0.60,
-                "reason": f"Distribution of {column}",
-            }
-        )
+    numeric_columns = [
+        item["column"]
+        for item in column_information
+        if item["semantic_type"] in {
+            "numeric_measure",
+            "count",
+        }
+    ]
+
+    # --------------------------------------------------
+    # Pure measurements
+    # Used for meaningful trends over time
+    # --------------------------------------------------
+
+    measure_columns = [
+        item["column"]
+        for item in column_information
+        if item["semantic_type"] == "numeric_measure"
+    ]
 
     # --------------------------------------------------
     # Categorical columns
     # --------------------------------------------------
 
-    for column in categorical_columns:
-        unique_count = df[column].nunique(dropna=True)
+    categorical_columns = [
+        item["column"]
+        for item in column_information
+        if item["semantic_type"] == "categorical"
+    ]
 
-        # Avoid charts for extremely high-cardinality columns
+    # --------------------------------------------------
+    # Datetime columns
+    # --------------------------------------------------
+
+    datetime_columns = [
+        item["column"]
+        for item in column_information
+        if item["semantic_type"] == "datetime"
+    ]
+
+    # --------------------------------------------------
+    # Geographic latitude
+    # --------------------------------------------------
+
+    latitude_columns = [
+        item["column"]
+        for item in column_information
+        if item["semantic_type"]
+        == "geographic_latitude"
+    ]
+
+    # --------------------------------------------------
+    # Geographic longitude
+    # --------------------------------------------------
+
+    longitude_columns = [
+        item["column"]
+        for item in column_information
+        if item["semantic_type"]
+        == "geographic_longitude"
+    ]
+
+    # ==================================================
+    # 2. NUMERIC DISTRIBUTIONS
+    # ==================================================
+
+    for column in numeric_columns:
+
+        recommendations.append(
+            {
+                "type": "histogram",
+                "column": column,
+                "score": 0.60,
+                "reason": (
+                    f"Distribution of {column}"
+                ),
+            }
+        )
+
+    # ==================================================
+    # 3. CATEGORICAL DISTRIBUTIONS
+    # ==================================================
+
+    for column in categorical_columns:
+
+        unique_count = df[column].nunique(
+            dropna=True
+        )
+
         if 2 <= unique_count <= 20:
+
             score = 0.70
 
-            # Fewer categories generally produce clearer charts
             if unique_count <= 10:
                 score += 0.10
 
@@ -60,37 +125,46 @@ def recommend_visualizations(
                     "type": "bar",
                     "column": column,
                     "score": score,
-                    "reason": f"Category frequency for {column}",
+                    "reason": (
+                        f"Category frequency for "
+                        f"{column}"
+                    ),
                 }
             )
 
-    # --------------------------------------------------
-    # Numeric vs numeric relationships
-    # --------------------------------------------------
+    # ==================================================
+    # 4. NUMERIC VS NUMERIC
+    # ==================================================
 
     if len(numeric_columns) >= 2:
-        correlation_matrix = df[numeric_columns].corr()
 
-        # Convert correlation matrix into a numeric NumPy array.
-        # This avoids Pandas Scalar typing issues with Pylance.
-        correlation_values = correlation_matrix.to_numpy(
-            dtype=float
+        correlation_matrix = df[
+            numeric_columns
+        ].corr()
+
+        correlation_values = (
+            correlation_matrix.to_numpy(
+                dtype=float
+            )
         )
 
         for i in range(len(numeric_columns)):
-            for j in range(i + 1, len(numeric_columns)):
+
+            for j in range(
+                i + 1,
+                len(numeric_columns),
+            ):
 
                 x_column = numeric_columns[i]
                 y_column = numeric_columns[j]
 
-                correlation = correlation_values[i, j]
+                correlation = (
+                    correlation_values[i, j]
+                )
 
-                # Skip relationships where correlation
-                # could not be calculated.
                 if pd.isna(correlation):
                     continue
 
-                # Stronger correlation = higher recommendation score.
                 score = 0.50 + (
                     abs(correlation) * 0.50
                 )
@@ -103,22 +177,68 @@ def recommend_visualizations(
                         "score": float(score),
                         "reason": (
                             f"Relationship between "
-                            f"{x_column} and {y_column}"
+                            f"{x_column} and "
+                            f"{y_column}"
                         ),
                     }
                 )
 
-    # --------------------------------------------------
-    # Rank recommendations
-    # --------------------------------------------------
+    # ==================================================
+    # 5. DATETIME VS MEASUREMENT
+    # ==================================================
+
+    for date_column in datetime_columns:
+
+        for numeric_column in measure_columns:
+
+            recommendations.append(
+                {
+                    "type": "line",
+                    "x": date_column,
+                    "y": numeric_column,
+                    "score": 0.85,
+                    "reason": (
+                        f"Trend of {numeric_column} "
+                        f"over {date_column}"
+                    ),
+                }
+            )
+
+    # ==================================================
+    # 6. GEOGRAPHIC MAP
+    # ==================================================
+
+    if latitude_columns and longitude_columns:
+
+        latitude = latitude_columns[0]
+        longitude = longitude_columns[0]
+
+        recommendations.append(
+            {
+                "type": "map",
+                "latitude": latitude,
+                "longitude": longitude,
+                "score": 0.90,
+                "reason": (
+                    f"Geographic distribution using "
+                    f"{latitude} and {longitude}"
+                ),
+            }
+        )
+
+    # ==================================================
+    # 7. RANK RECOMMENDATIONS
+    # ==================================================
 
     recommendations.sort(
         key=lambda item: item["score"],
         reverse=True,
     )
 
-    # --------------------------------------------------
-    # Limit recommendations
-    # --------------------------------------------------
+    # ==================================================
+    # 8. RETURN TOP RECOMMENDATIONS
+    # ==================================================
 
-    return recommendations[:max_recommendations]
+    return recommendations[
+        :max_recommendations
+    ]
