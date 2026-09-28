@@ -8,6 +8,10 @@ from app.services.chart_renderer import (
     render_chart,
 )
 
+from app.services.insight_engine import (
+    generate_insight,
+)
+
 
 st.title("Visualizations")
 
@@ -62,9 +66,32 @@ recommendations = recommend_visualizations(
 st.subheader("Recommended Visualizations")
 
 st.write(
-    f"InsightFlow found {len(recommendations)} "
-    "visualizations worth exploring."
+    f"InsightFlow identified "
+    f"{len(recommendations)} visualizations "
+    "based on the structure of your dataset."
 )
+
+st.divider()
+
+summary_col1, summary_col2, summary_col3 = st.columns(3)
+
+with summary_col1:
+    st.metric(
+        "Rows",
+        f"{df.shape[0]:,}",
+    )
+
+with summary_col2:
+    st.metric(
+        "Columns",
+        f"{df.shape[1]:,}",
+    )
+
+with summary_col3:
+    st.metric(
+        "Recommendations",
+        len(recommendations),
+    )
 
 
 # --------------------------------------------------
@@ -82,37 +109,58 @@ for index, recommendation in enumerate(
 
     reason = recommendation["reason"]
 
+    insight = generate_insight(
+    df,
+    recommendation,
+)
 
-    st.markdown(
+
+    col1, col2 = st.columns(
+        [1, 1],
+        gap="large",
+    )
+
+
+    with col1:
+
+      st.markdown(
         f"### {index}. "
         f"{chart_type.title()}"
     )
 
-    st.caption(
+      st.caption(
         f"Recommendation score: {score:.2f}"
     )
 
-    st.write(reason)
+      st.write(
+        f"**Why this visualization:** {reason}"
+    )
+
+      st.info(
+        f"**Insight:** {insight}"
+    )
 
 
-    try:
+    with col2:
 
-        figure = render_chart(
-            df,
-            recommendation,
-        )
+        try:
 
-        st.plotly_chart(
-            figure,
-            use_container_width=True,
-        )
+            figure = render_chart(
+                df,
+                recommendation,
+            )
 
-    except Exception as error:
+            st.plotly_chart(
+                figure,
+                use_container_width=True,
+            )
 
-        st.error(
-            f"Unable to render this visualization: "
-            f"{error}"
-        )
+        except Exception as error:
+
+            st.error(
+                f"Unable to render this visualization: "
+                f"{error}"
+            )
 
 
     st.divider()
