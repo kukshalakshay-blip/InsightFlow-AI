@@ -68,17 +68,62 @@ def generate_insight(
     # Histogram
     # --------------------------------------------------
 
+    # --------------------------------------------------
+    # Histogram
+    # --------------------------------------------------
+
     if chart_type == "histogram":
 
         column = recommendation["column"]
 
-        median = df[column].median()
-        mean = df[column].mean()
+        numeric_data = df[column].dropna()
+
+        if numeric_data.empty:
+            return (
+                f"No valid numeric values were available "
+                f"for {column}."
+            )
+
+        mean = numeric_data.mean()
+        median = numeric_data.median()
+
+        if median == 0:
+            return (
+                f"The distribution of {column} has a "
+                f"mean of {mean:,.2f} and a median of "
+                f"{median:,.2f}."
+            )
+
+        mean_median_difference = (
+            abs(mean - median)
+            / abs(median)
+        ) * 100
+
+        if mean_median_difference >= 20:
+            distribution_note = (
+                "The substantial difference between the "
+                "mean and median suggests that the "
+                "distribution may be skewed."
+            )
+
+        elif mean_median_difference >= 10:
+            distribution_note = (
+                "The mean and median differ noticeably, "
+                "indicating some asymmetry in the "
+                "distribution."
+            )
+
+        else:
+            distribution_note = (
+                "The mean and median are relatively close, "
+                "suggesting a more balanced distribution."
+            )
 
         return (
-            f"The distribution of {column} has a "
-            f"mean of {mean:,.2f} and a median of "
-            f"{median:,.2f}."
+            f"The distribution of {column} has a mean of "
+            f"{mean:,.2f} and a median of "
+            f"{median:,.2f}. "
+            f"{distribution_note}"
         )
 
     # --------------------------------------------------
@@ -194,9 +239,41 @@ def generate_insight(
         latitude = recommendation["latitude"]
         longitude = recommendation["longitude"]
 
+        geographic_data = df[
+            [latitude, longitude]
+        ].copy()
+
+        geographic_data = geographic_data.dropna(
+            subset=[latitude, longitude]
+        )
+
+        if geographic_data.empty:
+            return (
+                f"No valid geographic coordinates were "
+                f"available using {latitude} and {longitude}."
+            )
+
+        minimum_latitude = geographic_data[latitude].min()
+        maximum_latitude = geographic_data[latitude].max()
+
+        minimum_longitude = geographic_data[longitude].min()
+        maximum_longitude = geographic_data[longitude].max()
+
+        latitude_range = (
+            maximum_latitude - minimum_latitude
+        )
+
+        longitude_range = (
+            maximum_longitude - minimum_longitude
+        )
+
+        record_count = len(geographic_data)
+
         return (
-            f"The map shows the geographic distribution "
-            f"of records using {latitude} and {longitude}."
+            f"The dataset contains {record_count:,} "
+            f"geographic records spanning approximately "
+            f"{latitude_range:.2f}° of latitude and "
+            f"{longitude_range:.2f}° of longitude."
         )
 
     # --------------------------------------------------
