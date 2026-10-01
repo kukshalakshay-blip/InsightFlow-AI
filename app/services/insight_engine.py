@@ -130,6 +130,14 @@ def generate_insight(
     # Bar chart
     # --------------------------------------------------
 
+    # --------------------------------------------------
+    # Bar chart
+    # --------------------------------------------------
+
+    # --------------------------------------------------
+    # Bar chart
+    # --------------------------------------------------
+
     if chart_type == "bar":
 
         column = recommendation["column"]
@@ -147,10 +155,36 @@ def generate_insight(
         top_category = counts.index[0]
         top_count = counts.iloc[0]
 
+        total_count = counts.sum()
+
+        top_percentage = (
+            top_count / total_count
+        ) * 100
+
+        if top_percentage >= 50:
+            distribution_note = (
+                "This category represents more than half "
+                "of the valid records."
+            )
+
+        elif top_percentage >= 30:
+            distribution_note = (
+                "This category represents a substantial "
+                "share of the valid records."
+            )
+
+        else:
+            distribution_note = (
+                "No single category dominates the "
+                "distribution."
+            )
+
         return (
-            f"{top_category} is the most common "
-            f"category in {column}, with "
-            f"{top_count:,} records."
+            f"{top_category} is the most common category "
+            f"in {column}, accounting for "
+            f"{top_percentage:.1f}% of valid records "
+            f"({top_count:,} records). "
+            f"{distribution_note}"
         )
 
     # --------------------------------------------------
