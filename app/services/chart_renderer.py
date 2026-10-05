@@ -1,5 +1,6 @@
 import pandas as pd
 import plotly.express as px
+from app.services.analysis_engine import analyze_trend
 
 
 def render_scatter(
@@ -84,25 +85,16 @@ def render_line(
     x_column = recommendation["x"]
     y_column = recommendation["y"]
 
-    chart_data = df[
-        [x_column, y_column]
-    ].copy()
-
-    chart_data[x_column] = pd.to_datetime(
-        chart_data[x_column],
-        errors="coerce",
-        format="mixed",
+    frequency = recommendation.get(
+        "frequency",
+        "D",
     )
 
-    chart_data = chart_data.dropna(
-        subset=[x_column, y_column]
-    )
-
-    chart_data = (
-        chart_data
-        .groupby(x_column, as_index=False)[y_column]
-        .mean()
-        .sort_values(x_column)
+    chart_data = analyze_trend(
+        df,
+        x_column,
+        y_column,
+        frequency,
     )
 
     figure = px.line(

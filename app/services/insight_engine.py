@@ -1,5 +1,11 @@
 import pandas as pd
 
+from app.services.analysis_engine import (
+    analyze_correlation,
+    analyze_distribution,
+    analyze_trend,
+)
+
 
 def generate_insight(
     df: pd.DataFrame,
@@ -21,11 +27,13 @@ def generate_insight(
         x_column = recommendation["x"]
         y_column = recommendation["y"]
 
-        correlation = df[x_column].corr(
-            df[y_column]
+        correlation = analyze_correlation(
+            df,
+            x_column,
+            y_column,
         )
 
-        if pd.isna(correlation):
+        if correlation is None:
             return (
                 f"No reliable relationship could be "
                 f"calculated between {x_column} and "
@@ -76,37 +84,38 @@ def generate_insight(
 
         column = recommendation["column"]
 
-        numeric_data = df[column].dropna()
+        distribution = analyze_distribution(
+            df,
+            column,
+        )
 
-        if numeric_data.empty:
+        mean = distribution["mean"]
+        median = distribution["median"]
+        difference_percentage = distribution[
+            "difference_percentage"
+        ]
+
+        if mean is None or median is None:
             return (
                 f"No valid numeric values were available "
                 f"for {column}."
             )
 
-        mean = numeric_data.mean()
-        median = numeric_data.median()
-
-        if median == 0:
+        if difference_percentage is None:
             return (
                 f"The distribution of {column} has a "
                 f"mean of {mean:,.2f} and a median of "
                 f"{median:,.2f}."
             )
 
-        mean_median_difference = (
-            abs(mean - median)
-            / abs(median)
-        ) * 100
-
-        if mean_median_difference >= 20:
+        if difference_percentage >= 20:
             distribution_note = (
                 "The substantial difference between the "
                 "mean and median suggests that the "
                 "distribution may be skewed."
             )
 
-        elif mean_median_difference >= 10:
+        elif difference_percentage >= 10:
             distribution_note = (
                 "The mean and median differ noticeably, "
                 "indicating some asymmetry in the "
@@ -125,14 +134,6 @@ def generate_insight(
             f"{median:,.2f}. "
             f"{distribution_note}"
         )
-
-    # --------------------------------------------------
-    # Bar chart
-    # --------------------------------------------------
-
-    # --------------------------------------------------
-    # Bar chart
-    # --------------------------------------------------
 
     # --------------------------------------------------
     # Bar chart
@@ -196,18 +197,10 @@ def generate_insight(
         x_column = recommendation["x"]
         y_column = recommendation["y"]
 
-        chart_data = df[
-            [x_column, y_column]
-        ].copy()
-
-        chart_data[x_column] = pd.to_datetime(
-            chart_data[x_column],
-            errors="coerce",
-            format="mixed",
-        )
-
-        chart_data = chart_data.dropna(
-            subset=[x_column, y_column]
+        chart_data = analyze_trend(
+            df,
+            x_column,
+            y_column,
         )
 
         if chart_data.empty:
@@ -215,16 +208,6 @@ def generate_insight(
                 f"No valid data was available to analyze "
                 f"{y_column} over {x_column}."
             )
-
-        chart_data = (
-            chart_data
-            .groupby(
-                x_column,
-                as_index=False,
-            )[y_column]
-            .mean()
-            .sort_values(x_column)
-        )
 
         if len(chart_data) < 2:
             return (
@@ -275,9 +258,7 @@ def generate_insight(
 
         geographic_data = df[
             [latitude, longitude]
-        ].copy()
-
-        geographic_data = geographic_data.dropna(
+        ].dropna(
             subset=[latitude, longitude]
         )
 

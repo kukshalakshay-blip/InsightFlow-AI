@@ -2,6 +2,45 @@ import pandas as pd
 
 from app.services.column_intelligence import analyze_columns
 
+def is_suitable_for_scatter(
+    semantic_type: str,
+) -> bool:
+    """
+    Determine whether a semantic column type
+    is suitable for a scatter plot.
+    """
+
+    return semantic_type in {
+        "numeric_measure",
+        "count",
+    }
+
+
+def choose_time_frequency(
+    df: pd.DataFrame,
+    date_column: str,
+) -> str:
+    """
+    Choose an appropriate time aggregation
+    based on the number of unique dates.
+    """
+
+    unique_dates = (
+        pd.to_datetime(
+            df[date_column],
+            errors="coerce",
+        )
+        .dropna()
+        .nunique()
+    )
+
+    if unique_dates <= 90:
+        return "D"
+
+    if unique_dates <= 365:
+        return "W"
+
+    return "ME"
 
 def recommend_visualizations(
     df: pd.DataFrame,
@@ -90,19 +129,6 @@ def recommend_visualizations(
     # 2. NUMERIC DISTRIBUTIONS
     # ==================================================
 
-    for column in numeric_columns:
-
-        recommendations.append(
-            {
-                "type": "histogram",
-                "column": column,
-                "score": 0.60,
-                "reason": (
-                    f"Distribution of {column}"
-                ),
-            }
-        )
-
     # ==================================================
     # 3. CATEGORICAL DISTRIBUTIONS
     # ==================================================
@@ -158,16 +184,30 @@ def recommend_visualizations(
                 x_column = numeric_columns[i]
                 y_column = numeric_columns[j]
 
-                correlation = (
-                    correlation_values[i, j]
+                x_type = next(
+                    item["semantic_type"]
+                    for item in column_information
+                    if item["column"] == x_column
                 )
+
+                y_type = next(
+                    item["semantic_type"]
+                    for item in column_information
+                    if item["column"] == y_column
+                )
+
+                if not (
+                    is_suitable_for_scatter(x_type)
+                    and is_suitable_for_scatter(y_type)
+                ):
+                    continue
+
+                correlation = correlation_values[i, j]
 
                 if pd.isna(correlation):
                     continue
 
-                score = 0.50 + (
-                    abs(correlation) * 0.50
-                )
+                score = 0.50 + (abs(correlation) * 0.50)
 
                 recommendations.append(
                     {
@@ -196,6 +236,10 @@ def recommend_visualizations(
                     "type": "line",
                     "x": date_column,
                     "y": numeric_column,
+                    "frequency": choose_time_frequency(
+                        df,
+                        date_column,
+                    ),
                     "score": 0.85,
                     "reason": (
                         f"Trend of {numeric_column} "
