@@ -48,27 +48,30 @@ def render_bar(
     recommendation: dict,
 ):
     """
-    Create a bar chart from a visualization recommendation.
+    Create a metric-based bar chart from a
+    visualization recommendation.
     """
 
     column = recommendation["column"]
+    value_column = recommendation["value_column"]
 
-    counts = (
-        df[column]
-        .value_counts()
-        .reset_index()
+    summary = (
+        df.groupby(
+            column,
+            as_index=False,
+        )[value_column]
+        .sum()
+        .sort_values(
+            value_column,
+            ascending=False,
+        )
     )
 
-    counts.columns = [
-        column,
-        "count",
-    ]
-
     figure = px.bar(
-        counts,
+        summary,
         x=column,
-        y="count",
-        title=f"Category Frequency: {column}",
+        y=value_column,
+        title=f"{value_column} by {column}",
     )
 
     return figure

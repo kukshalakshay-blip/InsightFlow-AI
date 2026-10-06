@@ -6,6 +6,58 @@ from app.services.analysis_engine import (
     analyze_trend,
 )
 
+def build_analysis_context(
+    df: pd.DataFrame,
+    recommendations: list[dict],
+) -> dict:
+    """
+    Build a structured summary of the dataset that can
+    later be passed to an AI model.
+    """
+
+    context = {
+        "dataset": {
+            "rows": int(len(df)),
+            "columns": int(len(df.columns)),
+        },
+        "metrics": {},
+        "recommendations": [],
+    }
+
+    # ----------------------------------------------
+    # Basic numeric metrics
+    # ----------------------------------------------
+
+    numeric_columns = df.select_dtypes(
+        include="number"
+    ).columns
+
+    for column in numeric_columns:
+
+        series = df[column].dropna()
+
+        if series.empty:
+            continue
+
+        context["metrics"][column] = {
+            "mean": float(series.mean()),
+            "median": float(series.median()),
+            "min": float(series.min()),
+            "max": float(series.max()),
+            "total": float(series.sum()),
+        }
+
+    # ----------------------------------------------
+    # Visualization recommendations
+    # ----------------------------------------------
+
+    for recommendation in recommendations:
+
+        context["recommendations"].append(
+            recommendation
+        )
+
+    return context
 
 def generate_insight(
     df: pd.DataFrame,
@@ -18,9 +70,9 @@ def generate_insight(
 
     chart_type = recommendation["type"]
 
-    # --------------------------------------------------
-    # Scatter plot
-    # --------------------------------------------------
+    # ==================================================
+    # 1. SCATTER PLOT
+    # ==================================================
 
     if chart_type == "scatter":
 
@@ -72,13 +124,9 @@ def generate_insight(
             f"(correlation: {correlation:.2f})."
         )
 
-    # --------------------------------------------------
-    # Histogram
-    # --------------------------------------------------
-
-    # --------------------------------------------------
-    # Histogram
-    # --------------------------------------------------
+    # ==================================================
+    # 2. HISTOGRAM
+    # ==================================================
 
     if chart_type == "histogram":
 
@@ -135,13 +183,66 @@ def generate_insight(
             f"{distribution_note}"
         )
 
-    # --------------------------------------------------
-    # Bar chart
-    # --------------------------------------------------
+    # ==================================================
+    # 3. BAR CHART
+    # ==================================================
 
     if chart_type == "bar":
 
         column = recommendation["column"]
+
+        # --------------------------------------------------
+        # Metric-based bar chart
+        # --------------------------------------------------
+
+        value_column = recommendation.get(
+            "value_column"
+        )
+
+        if value_column is not None:
+
+            grouped_data = (
+                df.groupby(column)[value_column]
+                .sum()
+                .sort_values(
+                    ascending=False
+                )
+            )
+
+            if grouped_data.empty:
+                return (
+                    f"No valid values were available "
+                    f"to compare {value_column} "
+                    f"across {column}."
+                )
+
+            top_category = grouped_data.index[0]
+            top_value = grouped_data.iloc[0]
+
+            total_value = grouped_data.sum()
+
+            if total_value == 0:
+                return (
+                    f"{top_category} has the highest "
+                    f"total {value_column}, with a value "
+                    f"of {top_value:,.2f}."
+                )
+
+            percentage = (
+                top_value / total_value
+            ) * 100
+
+            return (
+                f"{top_category} has the highest total "
+                f"{value_column}, with a value of "
+                f"{top_value:,.2f}, representing "
+                f"{percentage:.1f}% of the total "
+                f"{value_column}."
+            )
+
+        # --------------------------------------------------
+        # Fallback: category frequency
+        # --------------------------------------------------
 
         counts = df[column].value_counts(
             dropna=True
@@ -164,8 +265,8 @@ def generate_insight(
 
         if top_percentage >= 50:
             distribution_note = (
-                "This category represents more than half "
-                "of the valid records."
+                "This category represents more than "
+                "half of the valid records."
             )
 
         elif top_percentage >= 30:
@@ -188,9 +289,9 @@ def generate_insight(
             f"{distribution_note}"
         )
 
-    # --------------------------------------------------
-    # Line chart
-    # --------------------------------------------------
+    # ==================================================
+    # 4. LINE CHART
+    # ==================================================
 
     if chart_type == "line":
 
@@ -243,13 +344,12 @@ def generate_insight(
             f"Average {y_column} {direction} by "
             f"{abs(percentage_change):.1f}% "
             f"over the observed period, changing from "
-            f"{first_value:,.2f} to "
-            f"{last_value:,.2f}."
+            f"{first_value:,.2f} to {last_value:,.2f}."
         )
 
-    # --------------------------------------------------
-    # Map
-    # --------------------------------------------------
+    # ==================================================
+    # 5. MAP
+    # ==================================================
 
     if chart_type == "map":
 
@@ -291,9 +391,9 @@ def generate_insight(
             f"{longitude_range:.2f}° of longitude."
         )
 
-    # --------------------------------------------------
-    # Unknown chart type
-    # --------------------------------------------------
+    # ==================================================
+    # 6. UNKNOWN CHART TYPE
+    # ==================================================
 
     return (
         "No analytical explanation is available "

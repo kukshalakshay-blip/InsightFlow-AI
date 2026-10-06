@@ -2,6 +2,38 @@ import pandas as pd
 
 from app.services.column_intelligence import analyze_columns
 
+
+def choose_best_measure(
+    df: pd.DataFrame,
+    measure_columns: list[str],
+) -> str | None:
+    """
+    Choose the most useful business measure
+    for categorical comparisons.
+    """
+
+    priority_keywords = [
+        "sales",
+        "revenue",
+        "profit",
+        "amount",
+        "value",
+        "quantity",
+    ]
+
+    for keyword in priority_keywords:
+
+        for column in measure_columns:
+
+            if keyword in column.lower():
+                return column
+
+    if measure_columns:
+        return measure_columns[0]
+
+    return None
+
+
 def is_suitable_for_scatter(
     semantic_type: str,
 ) -> bool:
@@ -14,6 +46,56 @@ def is_suitable_for_scatter(
         "numeric_measure",
         "count",
     }
+
+
+def select_diverse_recommendations(
+    recommendations: list[dict],
+    max_recommendations: int,
+) -> list[dict]:
+    """
+    Select high-scoring recommendations while
+    preventing the final list from being dominated
+    by one chart type.
+    """
+
+    type_limits = {
+        "scatter": 3,
+        "line": 2,
+        "bar": 3,
+        "histogram": 2,
+        "map": 1,
+    }
+
+    selected = []
+    type_counts = {}
+
+    for recommendation in recommendations:
+
+        chart_type = recommendation["type"]
+
+        current_count = type_counts.get(
+            chart_type,
+            0,
+        )
+
+        limit = type_limits.get(
+            chart_type,
+            2,
+        )
+
+        if current_count >= limit:
+            continue
+
+        selected.append(recommendation)
+
+        type_counts[chart_type] = (
+            current_count + 1
+        )
+
+        if len(selected) >= max_recommendations:
+            break
+
+    return selected
 
 
 def choose_time_frequency(
@@ -41,6 +123,7 @@ def choose_time_frequency(
         return "W"
 
     return "ME"
+
 
 def recommend_visualizations(
     df: pd.DataFrame,
@@ -82,6 +165,15 @@ def recommend_visualizations(
         for item in column_information
         if item["semantic_type"] == "numeric_measure"
     ]
+
+    # --------------------------------------------------
+    # Choose the best business measure
+    # --------------------------------------------------
+
+    best_measure = choose_best_measure(
+        df,
+        measure_columns,
+    )
 
     # --------------------------------------------------
     # Categorical columns
@@ -129,8 +221,21 @@ def recommend_visualizations(
     # 2. NUMERIC DISTRIBUTIONS
     # ==================================================
 
+    for column in numeric_columns:
+
+        recommendations.append(
+            {
+                "type": "histogram",
+                "column": column,
+                "score": 0.60,
+                "reason": (
+                    f"Distribution of {column}"
+                ),
+            }
+        )
+
     # ==================================================
-    # 3. CATEGORICAL DISTRIBUTIONS
+    # 3. METRIC-AWARE CATEGORICAL COMPARISONS
     # ==================================================
 
     for column in categorical_columns:
@@ -139,7 +244,10 @@ def recommend_visualizations(
             dropna=True
         )
 
-        if 2 <= unique_count <= 20:
+        if (
+            2 <= unique_count <= 20
+            and best_measure is not None
+        ):
 
             score = 0.70
 
@@ -150,10 +258,10 @@ def recommend_visualizations(
                 {
                     "type": "bar",
                     "column": column,
+                    "value_column": best_measure,
                     "score": score,
                     "reason": (
-                        f"Category frequency for "
-                        f"{column}"
+                        f"{best_measure} by {column}"
                     ),
                 }
             )
@@ -207,7 +315,9 @@ def recommend_visualizations(
                 if pd.isna(correlation):
                     continue
 
-                score = 0.50 + (abs(correlation) * 0.50)
+                score = 0.50 + (
+                    abs(correlation) * 0.50
+                )
 
                 recommendations.append(
                     {
@@ -280,9 +390,10 @@ def recommend_visualizations(
     )
 
     # ==================================================
-    # 8. RETURN TOP RECOMMENDATIONS
+    # 8. SELECT DIVERSE RECOMMENDATIONS
     # ==================================================
 
-    return recommendations[
-        :max_recommendations
-    ]
+    return select_diverse_recommendations(
+        recommendations,
+        max_recommendations,
+    )
