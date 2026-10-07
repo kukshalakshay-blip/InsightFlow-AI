@@ -11,8 +11,16 @@ def build_analysis_context(
     recommendations: list[dict],
 ) -> dict:
     """
-    Build a structured summary of the dataset that can
-    later be passed to an AI model.
+    Build a structured analytical context for the AI layer.
+
+    The AI receives:
+    - dataset information
+    - important numerical metrics
+    - deterministic analytical findings
+    - visualization recommendations
+
+    This keeps the AI focused on interpreting facts that
+    InsightFlow has already calculated.
     """
 
     context = {
@@ -21,12 +29,13 @@ def build_analysis_context(
             "columns": int(len(df.columns)),
         },
         "metrics": {},
+        "deterministic_findings": [],
         "recommendations": [],
     }
 
-    # ----------------------------------------------
-    # Basic numeric metrics
-    # ----------------------------------------------
+    # ======================================================
+    # 1. BASIC NUMERIC METRICS
+    # ======================================================
 
     numeric_columns = df.select_dtypes(
         include="number"
@@ -47,9 +56,35 @@ def build_analysis_context(
             "total": float(series.sum()),
         }
 
-    # ----------------------------------------------
-    # Visualization recommendations
-    # ----------------------------------------------
+    # ======================================================
+    # 2. DETERMINISTIC ANALYTICAL FINDINGS
+    # ======================================================
+
+    for recommendation in recommendations:
+
+        insight = generate_insight(
+            df,
+            recommendation,
+        )
+
+        context["deterministic_findings"].append(
+            {
+                "type": recommendation.get(
+                    "type"
+                ),
+                "reason": recommendation.get(
+                    "reason"
+                ),
+                "score": recommendation.get(
+                    "score"
+                ),
+                "insight": insight,
+            }
+        )
+
+    # ======================================================
+    # 3. VISUALIZATION RECOMMENDATIONS
+    # ======================================================
 
     for recommendation in recommendations:
 
