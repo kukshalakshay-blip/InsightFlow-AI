@@ -13,6 +13,10 @@ from app.services.visualization_engine import (
     recommend_visualizations,
 )
 
+from app.services.recommendation_engine import (
+    generate_business_recommendations,
+)
+
 
 # ==========================================================
 # PAGE HEADER
@@ -52,34 +56,23 @@ df = st.session_state["dataset"]
 # GENERATE VISUALIZATION RECOMMENDATIONS
 # ==========================================================
 
-recommendations = recommend_visualizations(
-    df
+visualization_recommendations = (
+    recommend_visualizations(df)
 )
 
 
 # ==========================================================
-# BUILD ANALYTICAL CONTEXT
-# ==========================================================
-
-analysis_context = build_analysis_context(
-    df,
-    recommendations,
-)
-
-
-# ==========================================================
-# DETERMINISTIC INSIGHTS
+# GENERATE DETERMINISTIC INSIGHTS
 # ==========================================================
 
 st.header("📊 Deterministic Insights")
 
 st.caption(
-    "These insights are generated directly from "
-    "statistical analysis of your dataset."
+    "Analytical findings calculated directly from your dataset."
 )
 
 
-if not recommendations:
+if not visualization_recommendations:
 
     st.info(
         "No analytical recommendations were generated "
@@ -89,7 +82,7 @@ if not recommendations:
 else:
 
     for index, recommendation in enumerate(
-        recommendations,
+        visualization_recommendations,
         start=1,
     ):
 
@@ -103,23 +96,142 @@ else:
             f"{recommendation['type'].title()}**"
         )
 
-        st.write(
-            insight
-        )
+        st.write(insight)
 
 
 # ==========================================================
-# AI ANALYSIS
+# BUSINESS RECOMMENDATIONS ENGINE
 # ==========================================================
 
 st.divider()
 
-st.header("🧠 AI Business Analysis")
+st.header("🎯 Business Recommendations")
 
 st.caption(
-    "Gemini interprets the analytical facts generated "
-    "by InsightFlow."
+    "Actionable suggestions generated from deterministic "
+    "business rules. Each recommendation is linked to an "
+    "observable pattern in your dataset."
 )
+
+
+business_recommendations = (
+    generate_business_recommendations(
+        df,
+        visualization_recommendations,
+    )
+)
+
+
+# ==========================================================
+# DISPLAY BUSINESS RECOMMENDATIONS
+# ==========================================================
+
+if not business_recommendations:
+
+    st.success(
+        "No business recommendation rules were triggered "
+        "by the available data."
+    )
+
+else:
+
+    # Summary metrics
+    high_priority_count = sum(
+        recommendation["priority"] == "high"
+        for recommendation in business_recommendations
+    )
+
+    medium_priority_count = sum(
+        recommendation["priority"] == "medium"
+        for recommendation in business_recommendations
+    )
+
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+
+    metric_col1.metric(
+        "Total Recommendations",
+        len(business_recommendations),
+    )
+
+    metric_col2.metric(
+        "High Priority",
+        high_priority_count,
+    )
+
+    metric_col3.metric(
+        "Medium Priority",
+        medium_priority_count,
+    )
+
+    st.markdown("### Recommended Actions")
+
+    for index, recommendation in enumerate(
+        business_recommendations,
+        start=1,
+    ):
+
+        priority = recommendation["priority"].upper()
+
+        priority_icon = {
+            "HIGH": "🔴",
+            "MEDIUM": "🟠",
+            "LOW": "🟢",
+        }.get(priority, "⚪")
+
+        with st.container(border=True):
+
+            st.markdown(
+                f"### {index}. {recommendation['title']}"
+            )
+
+            st.caption(
+                f"{priority_icon} {priority} PRIORITY"
+                f"  ·  "
+                f"{recommendation['category'].replace('_', ' ').title()}"
+            )
+
+            st.markdown("**Finding**")
+
+            st.write(
+                recommendation["finding"]
+            )
+
+            st.markdown("**Suggested action**")
+
+            st.write(
+                recommendation["action"]
+            )
+
+            st.markdown("**Why it matters**")
+
+            st.write(
+                recommendation["rationale"]
+            )
+
+
+# ==========================================================
+# BUILD ANALYTICAL CONTEXT FOR GEMINI
+# ==========================================================
+
+analysis_context = build_analysis_context(
+    df,
+    visualization_recommendations,
+)
+
+
+# Add deterministic business recommendations to the context.
+analysis_context["business_recommendations"] = [
+    {
+        "rule_id": item["rule_id"],
+        "category": item["category"],
+        "priority": item["priority"],
+        "title": item["title"],
+        "finding": item["finding"],
+        "action": item["action"],
+        "rationale": item["rationale"],
+    }
+    for item in business_recommendations
+]
 
 
 # ==========================================================
@@ -140,7 +252,7 @@ dataset_signature = (
 
 
 # ==========================================================
-# INITIALIZE AI CACHE
+# RESET STALE AI RESULTS
 # ==========================================================
 
 if (
@@ -158,6 +270,20 @@ if (
 
 
 # ==========================================================
+# AI BUSINESS ANALYSIS
+# ==========================================================
+
+st.divider()
+
+st.header("🧠 AI Business Analysis")
+
+st.caption(
+    "Gemini interprets InsightFlow's analytical findings "
+    "and rule-based business recommendations."
+)
+
+
+# ==========================================================
 # GENERATE AI ANALYSIS
 # ==========================================================
 
@@ -167,7 +293,8 @@ if st.button(
 ):
 
     with st.spinner(
-        "AI analyst is reviewing the dataset..."
+        "AI analyst is reviewing the dataset and "
+        "business recommendations..."
     ):
 
         try:
@@ -176,25 +303,21 @@ if st.button(
                 analysis_context
             )
 
-            # Store result for future Streamlit reruns.
             st.session_state[
                 "ai_analysis"
             ] = ai_result
 
-        except Exception as error:
+        except Exception:
 
             st.error(
                 "The AI analysis could not be generated "
-                "right now."
-            )
-
-            st.caption(
-                f"Technical detail: {error}"
+                "right now. Your deterministic insights "
+                "and business recommendations are still available."
             )
 
 
 # ==========================================================
-# DISPLAY CACHED AI ANALYSIS
+# DISPLAY AI ANALYSIS
 # ==========================================================
 
 ai_result = st.session_state.get(
@@ -205,62 +328,48 @@ ai_result = st.session_state.get(
 if ai_result is not None:
 
     # ------------------------------------------------------
-    # Executive Summary
+    # EXECUTIVE SUMMARY
     # ------------------------------------------------------
 
-    st.subheader(
-        "Executive Summary"
-    )
+    st.subheader("Executive Summary")
 
     st.write(
         ai_result.executive_summary
     )
 
     # ------------------------------------------------------
-    # Key Findings
+    # KEY FINDINGS
     # ------------------------------------------------------
 
-    st.subheader(
-        "🔎 Key Findings"
-    )
+    st.subheader("🔎 Key Findings")
 
-    for finding in (
-        ai_result.key_findings
-    ):
+    for finding in ai_result.key_findings:
 
         st.markdown(
             f"- {finding}"
         )
 
     # ------------------------------------------------------
-    # Recommendations
+    # AI RECOMMENDATIONS
     # ------------------------------------------------------
 
-    st.subheader(
-        "🎯 Recommendations"
-    )
+    st.subheader("💡 AI Recommendations")
 
-    for recommendation in (
-        ai_result.recommendations
-    ):
+    for recommendation in ai_result.recommendations:
 
         st.markdown(
             f"- {recommendation}"
         )
 
     # ------------------------------------------------------
-    # Risks / Anomalies
+    # RISKS AND ANOMALIES
     # ------------------------------------------------------
 
-    st.subheader(
-        "⚠️ Risks / Anomalies"
-    )
+    st.subheader("⚠️ Risks / Anomalies")
 
     if ai_result.risks_or_anomalies:
 
-        for risk in (
-            ai_result.risks_or_anomalies
-        ):
+        for risk in ai_result.risks_or_anomalies:
 
             st.markdown(
                 f"- {risk}"
@@ -269,7 +378,6 @@ if ai_result is not None:
     else:
 
         st.success(
-            "No significant risks or anomalies "
-            "were identified from the available "
-            "analytical facts."
+            "No significant risks or anomalies were "
+            "identified from the available analytical facts."
         )
