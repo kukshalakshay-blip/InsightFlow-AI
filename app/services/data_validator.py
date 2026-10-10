@@ -13,24 +13,22 @@ class ValidationResult:
 
 
 def validate_dataset(df: pd.DataFrame) -> ValidationResult:
-    """
-    Validate a loaded dataset before it enters the analysis pipeline.
-    """
+    """Validate a dataset's structure and report potential data-quality issues."""
 
     errors: list[str] = []
     warnings: list[str] = []
 
-    # Basic structure checks
+    # 1. Check the basic dataset structure
     if df.empty:
         errors.append("The dataset contains no rows.")
 
     if df.shape[1] == 0:
         errors.append("The dataset contains no columns.")
 
-    # Column-name checks
     if df.columns.empty:
         errors.append("The dataset has no column names.")
 
+    # 2. Detect duplicate column names
     if df.columns.duplicated().any():
         duplicated_columns = (
             df.columns[df.columns.duplicated()]
@@ -42,7 +40,7 @@ def validate_dataset(df: pd.DataFrame) -> ValidationResult:
             f"Duplicate column names found: {duplicated_columns}"
         )
 
-    # Missing-value warning
+    # 3. Check missing values
     total_cells = df.shape[0] * df.shape[1]
 
     if total_cells > 0:
@@ -58,7 +56,7 @@ def validate_dataset(df: pd.DataFrame) -> ValidationResult:
                 "More than 20% of the dataset values are missing."
             )
 
-    # Duplicate-row warning
+    # 4. Detect duplicate rows
     duplicate_rows = int(df.duplicated().sum())
 
     if duplicate_rows > 0:
@@ -66,6 +64,7 @@ def validate_dataset(df: pd.DataFrame) -> ValidationResult:
             f"{duplicate_rows:,} duplicate rows detected."
         )
 
+    # 5. Return the validation result
     return ValidationResult(
         is_valid=len(errors) == 0,
         errors=errors,

@@ -44,18 +44,29 @@ def analyze_correlation(
     y_column: str,
 ) -> float | None:
     """
-    Calculate the Pearson correlation between two
-    numerical columns.
+    Calculate the Pearson correlation between two numerical columns.
+
+    Return None when either column has insufficient variation
+    or the correlation cannot be calculated.
     """
 
-    correlation = df[x_column].corr(
-        df[y_column]
-    )
+    x = df[x_column]
+    y = df[y_column]
+
+    # Correlation is undefined when either column is constant.
+    if x.nunique(dropna=True) < 2:
+        return None
+
+    if y.nunique(dropna=True) < 2:
+        return None
+
+    correlation = x.corr(y)
 
     if pd.isna(correlation):
         return None
 
     return float(correlation)
+
 
 def analyze_distribution(
     df: pd.DataFrame,

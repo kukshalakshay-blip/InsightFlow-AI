@@ -23,8 +23,8 @@ def profile_dataset(df: pd.DataFrame) -> dict:
             include="number"
         ).columns.tolist(),
         "categorical_columns": df.select_dtypes(
-            include=["object", "category", "bool"]
-        ).columns.tolist(),
+    include=["object", "str", "category", "bool"]
+).columns.tolist(),
     }
 
     column_profiles = {}
