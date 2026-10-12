@@ -260,19 +260,11 @@ dataset_signature = generate_dataset_signature(
 # RESET STALE AI RESULTS
 # ==========================================================
 
-if (
-    "ai_analysis" not in st.session_state
-    or st.session_state.get(
-        "ai_analysis_signature"
-    ) != dataset_signature
-):
 
-    st.session_state["ai_analysis"] = None
-
-    st.session_state[
-        "ai_analysis_signature"
-    ] = dataset_signature
-
+reset_stale_ai_analysis(
+    st.session_state,
+    dataset_signature,
+)
 
 # ==========================================================
 # AI BUSINESS ANALYSIS
