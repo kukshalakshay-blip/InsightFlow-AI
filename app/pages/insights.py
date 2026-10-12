@@ -17,6 +17,13 @@ from app.services.recommendation_engine import (
     generate_business_recommendations,
 )
 
+from app.services.dataset_signature import (
+    generate_dataset_signature,
+)
+
+from app.services.session_state import (
+    reset_stale_ai_analysis,
+)
 
 # ==========================================================
 # PAGE HEADER
@@ -243,11 +250,9 @@ dataset_name = st.session_state.get(
     "dataset",
 )
 
-dataset_signature = (
+dataset_signature = generate_dataset_signature(
+    df,
     dataset_name,
-    len(df),
-    len(df.columns),
-    tuple(df.columns),
 )
 
 
