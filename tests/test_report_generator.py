@@ -46,6 +46,7 @@ def sample_recommendations():
 def extract_pdf_text(pdf_bytes):
     """Extract readable text from generated PDF bytes."""
     reader = PdfReader(BytesIO(pdf_bytes))
+
     return "\n".join(
         page.extract_text() or ""
         for page in reader.pages
@@ -228,3 +229,50 @@ def test_long_report_generates_multiple_pages(sample_profile):
     reader = PdfReader(BytesIO(pdf_bytes))
 
     assert len(reader.pages) > 1
+
+
+def test_html_like_text_is_rendered_literally(sample_profile):
+    malicious_text = '<script>alert("test")</script>'
+
+    pdf_bytes = generate_pdf_report(
+        dataset_name="sales.csv",
+        profile=sample_profile,
+        deterministic_insights=[
+            {
+                "title": "Markup Test",
+                "text": malicious_text,
+            }
+        ],
+        business_recommendations=[],
+    )
+
+    text = extract_pdf_text(pdf_bytes)
+
+    assert "Markup Test" in text
+    assert malicious_text in text
+
+
+def test_multipage_report_contains_page_numbers(sample_profile):
+    long_text = "Business analysis detail. " * 2500
+
+    pdf_bytes = generate_pdf_report(
+        dataset_name="large_report.csv",
+        profile=sample_profile,
+        deterministic_insights=[
+            {
+                "title": "Extended Analysis",
+                "text": long_text,
+            }
+        ],
+        business_recommendations=[],
+    )
+
+    reader = PdfReader(BytesIO(pdf_bytes))
+
+    assert len(reader.pages) > 1
+
+    first_page_text = reader.pages[0].extract_text()
+    second_page_text = reader.pages[1].extract_text()
+
+    assert "Page 1" in first_page_text
+    assert "Page 2" in second_page_text

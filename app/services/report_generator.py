@@ -1,4 +1,5 @@
 from datetime import datetime
+from html import escape
 from io import BytesIO
 
 from reportlab.lib import colors
@@ -16,7 +17,68 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     HRFlowable,
+    Image,
+    KeepTogether,
 )
+
+
+# ==========================================================
+# SAFE TEXT HANDLING
+# ==========================================================
+
+def _safe_text(value) -> str:
+    """
+    Escape dynamic text before inserting it into ReportLab
+    paragraphs.
+
+    This prevents HTML-like characters in dataset names,
+    analytical findings, recommendations, and AI-generated
+    content from being interpreted as ReportLab markup.
+    """
+    return escape(str(value), quote=False)
+
+
+# ==========================================================
+# PAGE FOOTER
+# ==========================================================
+
+def _draw_page_footer(canvas, document):
+    """Draw a consistent footer and page number on each PDF page."""
+
+    canvas.saveState()
+
+    page_width, _ = document.pagesize
+
+    canvas.setStrokeColor(
+        colors.HexColor("#CBD5E1")
+    )
+    canvas.setLineWidth(0.5)
+
+    canvas.line(
+        document.leftMargin,
+        14 * mm,
+        page_width - document.rightMargin,
+        14 * mm,
+    )
+
+    canvas.setFont("Helvetica", 8)
+    canvas.setFillColor(
+        colors.HexColor("#64748B")
+    )
+
+    canvas.drawString(
+        document.leftMargin,
+        9 * mm,
+        "InsightFlow AI | Business Analysis Report",
+    )
+
+    canvas.drawRightString(
+        page_width - document.rightMargin,
+        9 * mm,
+        f"Page {document.page}",
+    )
+
+    canvas.restoreState()
 
 
 # ==========================================================
@@ -29,6 +91,7 @@ def generate_pdf_report(
     deterministic_insights: list[dict],
     business_recommendations: list[dict],
     ai_analysis=None,
+    chart_images: list[dict] | None = None,
 ) -> bytes:
     """
     Generate a downloadable PDF business analysis report.
@@ -51,6 +114,13 @@ def generate_pdf_report(
     ai_analysis:
         Optional AIAnalysis Pydantic model returned by Gemini.
 
+    chart_images:
+        Optional list of chart dictionaries. Each dictionary
+        should contain:
+            - title: Chart title
+            - type: Chart type
+            - image: PNG image bytes
+
     Returns
     -------
     bytes:
@@ -69,6 +139,10 @@ def generate_pdf_report(
         title="InsightFlow Business Analysis Report",
         author="InsightFlow AI",
     )
+
+    # ======================================================
+    # STYLES
+    # ======================================================
 
     styles = getSampleStyleSheet()
 
@@ -147,7 +221,7 @@ def generate_pdf_report(
 
     story.append(
         Paragraph(
-            "Business Intelligence & Data Analysis Report",
+            "Business Intelligence &amp; Data Analysis Report",
             styles["ReportSubtitle"],
         )
     )
@@ -173,7 +247,7 @@ def generate_pdf_report(
 
     story.append(
         Paragraph(
-            f"<b>Dataset:</b> {dataset_name}",
+            f"<b>Dataset:</b> {_safe_text(dataset_name)}",
             styles["BodyTextCustom"],
         )
     )
@@ -276,7 +350,67 @@ def generate_pdf_report(
     story.append(profile_table)
 
     # ======================================================
-    # 3. EXECUTIVE SUMMARY
+    # 3. VISUAL ANALYSIS
+    # ======================================================
+
+    if chart_images:
+
+        valid_charts = [
+            chart
+            for chart in chart_images
+            if isinstance(chart, dict)
+            and isinstance(chart.get("image"), bytes)
+            and chart["image"]
+        ]
+
+        if valid_charts:
+
+            story.append(
+                Paragraph(
+                    "Visual Analysis",
+                    styles["SectionHeading"],
+                )
+            )
+
+            for index, chart in enumerate(
+                valid_charts,
+                start=1,
+            ):
+
+                chart_title = chart.get(
+                    "title",
+                    f"Visualization {index}",
+                )
+
+                try:
+                    chart_image = Image(
+                        BytesIO(chart["image"]),
+                        width=165 * mm,
+                        height=95 * mm,
+                        kind="proportional",
+                    )
+
+                    chart_block = [
+                        Paragraph(
+                            _safe_text(chart_title),
+                            styles["Heading3"],
+                        ),
+                        Spacer(1, 2 * mm),
+                        chart_image,
+                        Spacer(1, 5 * mm),
+                    ]
+
+                    story.append(
+                        KeepTogether(chart_block)
+                    )
+
+                except Exception:
+                    # Skip an invalid image without preventing
+                    # the remaining report from being generated.
+                    continue
+
+    # ======================================================
+    # 4. EXECUTIVE SUMMARY
     # ======================================================
 
     if ai_analysis is not None:
@@ -290,7 +424,9 @@ def generate_pdf_report(
 
         story.append(
             Paragraph(
-                str(ai_analysis.executive_summary),
+                _safe_text(
+                    ai_analysis.executive_summary
+                ),
                 styles["BodyTextCustom"],
             )
         )
@@ -310,13 +446,13 @@ def generate_pdf_report(
 
             story.append(
                 Paragraph(
-                    f"&bull; {finding}",
+                    f"&bull; {_safe_text(finding)}",
                     styles["BodyTextCustom"],
                 )
             )
 
     # ======================================================
-    # 4. DETERMINISTIC INSIGHTS
+    # 5. DETERMINISTIC INSIGHTS
     # ======================================================
 
     story.append(
@@ -345,14 +481,14 @@ def generate_pdf_report(
 
             story.append(
                 Paragraph(
-                    f"<b>{title}</b>",
+                    f"<b>{_safe_text(title)}</b>",
                     styles["BodyTextCustom"],
                 )
             )
 
             story.append(
                 Paragraph(
-                    text,
+                    _safe_text(text),
                     styles["BodyTextCustom"],
                 )
             )
@@ -367,7 +503,7 @@ def generate_pdf_report(
         )
 
     # ======================================================
-    # 5. BUSINESS RECOMMENDATIONS
+    # 6. BUSINESS RECOMMENDATIONS
     # ======================================================
 
     story.append(
@@ -389,9 +525,11 @@ def generate_pdf_report(
                 f"Recommendation {index}",
             )
 
-            priority = recommendation.get(
-                "priority",
-                "medium",
+            priority = str(
+                recommendation.get(
+                    "priority",
+                    "medium",
+                )
             ).upper()
 
             finding = recommendation.get(
@@ -411,29 +549,30 @@ def generate_pdf_report(
 
             story.append(
                 Paragraph(
-                    f"<b>{index}. {title}</b> "
-                    f"— {priority} PRIORITY",
+                    f"<b>{index}. {_safe_text(title)}</b> "
+                    f"— {_safe_text(priority)} PRIORITY",
                     styles["BodyTextCustom"],
                 )
             )
 
             story.append(
                 Paragraph(
-                    f"<b>Finding:</b> {finding}",
+                    f"<b>Finding:</b> {_safe_text(finding)}",
                     styles["BodyTextCustom"],
                 )
             )
 
             story.append(
                 Paragraph(
-                    f"<b>Recommended action:</b> {action}",
+                    f"<b>Recommended action:</b> "
+                    f"{_safe_text(action)}",
                     styles["BodyTextCustom"],
                 )
             )
 
             story.append(
                 Paragraph(
-                    f"<b>Rationale:</b> {rationale}",
+                    f"<b>Rationale:</b> {_safe_text(rationale)}",
                     styles["BodyTextCustom"],
                 )
             )
@@ -452,7 +591,7 @@ def generate_pdf_report(
         )
 
     # ======================================================
-    # 6. AI RECOMMENDATIONS
+    # 7. AI RECOMMENDATIONS
     # ======================================================
 
     if ai_analysis is not None:
@@ -468,7 +607,7 @@ def generate_pdf_report(
 
             story.append(
                 Paragraph(
-                    f"&bull; {recommendation}",
+                    f"&bull; {_safe_text(recommendation)}",
                     styles["BodyTextCustom"],
                 )
             )
@@ -490,7 +629,7 @@ def generate_pdf_report(
 
                 story.append(
                     Paragraph(
-                        f"&bull; {risk}",
+                        f"&bull; {_safe_text(risk)}",
                         styles["BodyTextCustom"],
                     )
                 )
@@ -506,7 +645,7 @@ def generate_pdf_report(
             )
 
     # ======================================================
-    # 7. REPORT FOOTER
+    # 8. REPORT FOOTER CONTENT
     # ======================================================
 
     story.append(
@@ -538,7 +677,11 @@ def generate_pdf_report(
     # BUILD PDF
     # ======================================================
 
-    document.build(story)
+    document.build(
+        story,
+        onFirstPage=_draw_page_footer,
+        onLaterPages=_draw_page_footer,
+    )
 
     buffer.seek(0)
 
