@@ -1,7 +1,7 @@
 import streamlit as st
 
-from app.services.data_loader import load_dataset
-from app.services.data_validator import validate_dataset
+from app.services.upload_service import process_uploaded_dataset
+
 
 st.title("Data Upload")
 
@@ -18,19 +18,36 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
 
-    try:
-        df = load_dataset(uploaded_file)
-        validation = validate_dataset(df)
+    # Step 1: Process the uploaded file through our upload service.
+    result = process_uploaded_dataset(uploaded_file)
 
-        if not validation.is_valid:
-            for error in validation.errors:
-                st.error(error)
+    # Step 2: Handle file-loading errors.
+    if result.error:
+        st.error(
+            f"Unable to load the dataset: {result.error}"
+        )
 
-            st.stop()
+    # Step 3: Handle validation errors.
+    elif (
+        result.validation is not None
+        and not result.validation.is_valid
+    ):
+        st.error(
+            "The uploaded dataset failed validation."
+        )
 
-        for warning in validation.warnings:
-            st.warning(warning)
+        for error in result.validation.errors:
+            st.error(error)
 
+    # Step 4: Display the dataset if processing succeeds.
+    elif result.is_successful and (df := result.dataframe) is not None:
+
+        # Display warnings without rejecting the dataset.
+        if result.validation is not None:
+            for warning in result.validation.warnings:
+                st.warning(warning)
+
+        # Store the dataset for use by other application pages.
         st.session_state["dataset"] = df
         st.session_state["dataset_name"] = uploaded_file.name
 
@@ -38,6 +55,7 @@ if uploaded_file is not None:
             f"Successfully loaded {uploaded_file.name}"
         )
 
+        # Dataset overview.
         st.divider()
 
         st.subheader("Dataset Overview")
@@ -57,11 +75,14 @@ if uploaded_file is not None:
             )
 
         with col3:
+            missing_values = int(df.isna().sum().sum())
+
             st.metric(
                 "Missing Values",
-                f"{df.isna().sum().sum():,}",
+                f"{missing_values:,}",
             )
 
+        # Dataset preview.
         st.divider()
 
         st.subheader("Data Preview")
@@ -69,10 +90,4 @@ if uploaded_file is not None:
         st.dataframe(
             df.head(100),
             use_container_width=True,
-        )
-
-    except Exception as error:
-
-        st.error(
-            f"Unable to load the dataset: {error}"
         )
