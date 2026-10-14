@@ -256,13 +256,14 @@ def recommend_visualizations(
             ),
         })
 
-    # -----------------------------------------------------
+       # -----------------------------------------------------
     # B. Bar Chart Recommendations
     # -----------------------------------------------------
 
     if best_measure is not None:
 
         for column in categorical_columns:
+
             unique_count = df[column].nunique(
                 dropna=True,
             )
@@ -276,18 +277,28 @@ def recommend_visualizations(
                 if unique_count <= 10:
                     score += 0.10
 
-                recommendations.append({
-                    "type": "bar",
-                    "column": column,
-                    "x": column,
-                    "y": best_measure,
-                    "score": score,
-                    "reason": (
-                        f"Compare '{best_measure}' across "
-                        f"the categories of '{column}'."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "bar",
+                        "column": column,
 
+                        # X-axis: categorical column.
+                        "x": column,
+
+                        # Y-axis: numeric business measure.
+                        "y": best_measure,
+
+                        # Explicit field expected by chart_renderer.py.
+                        "value_column": best_measure,
+
+                        "score": score,
+
+                        "reason": (
+                            f"Compare '{best_measure}' across "
+                            f"the categories of '{column}'."
+                        ),
+                    }
+                )
     # -----------------------------------------------------
     # C. Scatter Plot Recommendations
     # -----------------------------------------------------

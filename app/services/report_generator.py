@@ -28,14 +28,42 @@ from reportlab.platypus import (
 
 def _safe_text(value) -> str:
     """
-    Escape dynamic text before inserting it into ReportLab
-    paragraphs.
+    Escape dynamic text before inserting it into ReportLab paragraphs.
 
-    This prevents HTML-like characters in dataset names,
-    analytical findings, recommendations, and AI-generated
-    content from being interpreted as ReportLab markup.
+    This prevents HTML-like characters in dataset names, analytical
+    findings, recommendations, and AI-generated content from being
+    interpreted as ReportLab markup.
     """
     return escape(str(value), quote=False)
+
+
+def _normalize_dataset_name(dataset_name: str) -> str:
+    """Remove accidentally duplicated file extensions from a dataset name.
+
+    Examples:
+        ``sales.csv.csv`` -> ``sales.csv``
+        ``prices.xlsx.xlsx`` -> ``prices.xlsx``
+
+    Names with a single extension are returned unchanged.
+    """
+    name = str(dataset_name).strip()
+
+    while True:
+        suffix = name.rsplit(".", 1)
+        if len(suffix) != 2 or not suffix[0] or not suffix[1]:
+            return name
+
+        extension = "." + suffix[1]
+        stem = suffix[0]
+        previous_extension = stem.rsplit(".", 1)
+
+        if (
+            len(previous_extension) == 2
+            and previous_extension[1].lower() == suffix[1].lower()
+        ):
+            name = stem
+        else:
+            return name
 
 
 # ==========================================================
@@ -245,9 +273,11 @@ def generate_pdf_report(
         )
     )
 
+    display_dataset_name = _normalize_dataset_name(dataset_name)
+
     story.append(
         Paragraph(
-            f"<b>Dataset:</b> {_safe_text(dataset_name)}",
+            f"<b>Dataset:</b> {_safe_text(display_dataset_name)}",
             styles["BodyTextCustom"],
         )
     )
