@@ -3,6 +3,7 @@ import pandas as pd
 from app.services.analysis_engine import (
     analyze_correlation,
     analyze_trend,
+    detect_outliers,
 )
 
 
@@ -396,6 +397,102 @@ def generate_business_recommendations(
                 ),
             }
         )
+
+
+        # ======================================================
+    # 7. DATA QUALITY: NUMERICAL OUTLIERS
+    # ======================================================
+
+    identifier_keywords = (
+        "id",
+        "identifier",
+        "index",
+        "postal_code",
+        "zip_code",
+        "phone",
+        "account_number",
+        "transaction_number",
+    )
+
+    for column in df.columns:
+
+        # Only inspect numeric columns.
+        if not pd.api.types.is_numeric_dtype(df[column]):
+            continue
+
+        column_name = column.lower().strip()
+
+        # Avoid treating identifiers as continuous measurements.
+        is_identifier = (
+            column_name == "id"
+            or column_name.endswith("_id")
+            or column_name.startswith("id_")
+            or any(
+                keyword in column_name
+                for keyword in identifier_keywords[1:]
+            )
+        )
+
+        if is_identifier:
+            continue
+
+        valid_values = df[column].dropna()
+
+        # Require enough observations for a meaningful IQR analysis.
+        if len(valid_values) < 10:
+            continue
+
+        # Constant columns cannot provide useful outlier findings.
+        if valid_values.nunique() < 2:
+            continue
+
+        result = detect_outliers(df, column)
+
+        outlier_count = result["outlier_count"]
+        outlier_percentage = result["outlier_percentage"]
+
+        if outlier_count == 0:
+            continue
+
+        # Avoid overemphasizing columns where nearly all values
+        # fall outside the IQR fences.
+        if outlier_percentage >= 25:
+            continue
+
+        priority = (
+            "high"
+            if outlier_percentage >= 5
+            else "medium"
+        )
+
+        recommendations.append(
+            {
+                "rule_id": f"numerical_outliers:{column}",
+                "category": "data_quality",
+                "priority": priority,
+                "title": f"Investigate unusual values in {column}",
+                "finding": (
+                    f"{outlier_count:,} records in {column} "
+                    f"fall outside the IQR-based expected range "
+                    f"({outlier_percentage:.2f}% of valid records). "
+                    f"The lower and upper bounds are "
+                    f"{result['lower_bound']:.4g} and "
+                    f"{result['upper_bound']:.4g}, respectively."
+                ),
+                "action": (
+                    f"Inspect the unusual values in {column} "
+                    "to determine whether they represent data-entry "
+                    "errors, legitimate extreme observations, "
+                    "or a distinct population."
+                ),
+                "rationale": (
+                    "Unusual numerical observations can influence "
+                    "aggregates and statistical analysis. "
+                    "An outlier is not necessarily an error and "
+                    "should be investigated in context."
+                ),
+            }
+        )    
 
     # ======================================================
     # 7. DEDUPLICATE RECOMMENDATIONS

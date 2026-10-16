@@ -8,6 +8,8 @@ from app.services.analysis_engine import (
     analyze_trend,
 )
 
+from app.services.analysis_engine import detect_outliers
+
 
 # ==========================================================
 # TREND ANALYSIS
@@ -321,3 +323,124 @@ def test_analyze_distribution_rejects_missing_column():
 
     with pytest.raises(KeyError):
         analyze_distribution(df, "profit")
+
+def test_detects_extreme_high_value():
+    df = pd.DataFrame({
+        "sales": [10, 11, 12, 12, 13, 14, 15, 100],
+    })
+
+    result = detect_outliers(df, "sales")
+
+    assert result["outlier_count"] == 1
+    assert result["outlier_values"] == [100]
+    assert result["valid_count"] == 8
+
+
+def test_detects_extreme_low_value():
+    df = pd.DataFrame({
+        "measurement": [-100, 10, 11, 12, 13, 14, 15, 16],
+    })
+
+    result = detect_outliers(df, "measurement")
+
+    assert -100 in result["outlier_values"]
+
+
+def test_missing_values_are_excluded():
+    df = pd.DataFrame({
+        "value": [10, 11, 12, 13, 14, 15, 100, None],
+    })
+
+    result = detect_outliers(df, "value")
+
+    assert result["valid_count"] == 7
+    assert result["outlier_count"] == 1
+
+
+def test_constant_column_has_no_outliers():
+    df = pd.DataFrame({
+        "value": [5, 5, 5, 5, 5],
+    })
+
+    result = detect_outliers(df, "value")
+
+    assert result["outlier_count"] == 0
+    assert result["iqr"] == 0
+
+
+def test_empty_numeric_column_is_supported():
+    df = pd.DataFrame({
+        "value": pd.Series([], dtype="float64"),
+    })
+
+    result = detect_outliers(df, "value")
+
+    assert result["outlier_count"] == 0
+    assert result["valid_count"] == 0
+    assert result["q1"] is None
+
+
+def test_column_with_only_missing_values_is_supported():
+    df = pd.DataFrame({
+        "value": [None, None, None],
+    })
+
+    result = detect_outliers(df, "value")
+
+    assert result["outlier_count"] == 0
+    assert result["valid_count"] == 0
+
+
+def test_non_numeric_column_raises_error():
+    df = pd.DataFrame({
+        "region": ["North", "South", "East"],
+    })
+
+    with pytest.raises(TypeError):
+        detect_outliers(df, "region")
+
+
+def test_missing_column_raises_error():
+    df = pd.DataFrame({
+        "sales": [10, 20, 30],
+    })
+
+    with pytest.raises(KeyError):
+        detect_outliers(df, "profit")
+
+
+def test_invalid_multiplier_raises_error():
+    df = pd.DataFrame({
+        "value": [10, 20, 30],
+    })
+
+    with pytest.raises(ValueError):
+        detect_outliers(df, "value", multiplier=0)
+
+
+def test_original_dataframe_is_not_modified():
+    df = pd.DataFrame({
+        "sales": [10, 11, 12, 13, 100],
+    })
+
+    original = df.copy(deep=True)
+
+    detect_outliers(df, "sales")
+
+    pd.testing.assert_frame_equal(df, original)
+
+
+def test_outlier_percentage_is_calculated_correctly():
+    df = pd.DataFrame({
+        "value": [10, 11, 12, 13, 14, 15, 100],
+    })
+
+    result = detect_outliers(df, "value")
+
+    expected_percentage = (
+        result["outlier_count"] / result["valid_count"]
+    ) * 100
+
+    assert result["outlier_percentage"] == pytest.approx(
+        expected_percentage
+    )        

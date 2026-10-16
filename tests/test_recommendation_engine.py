@@ -755,3 +755,120 @@ def test_missing_values_and_negative_profit_are_both_reported():
 
     assert "missing_data" in rule_ids
     assert "negative_profit" in rule_ids
+
+
+
+    # ==========================================================
+# NUMERICAL OUTLIER RECOMMENDATIONS
+# ==========================================================
+
+import numpy as np
+
+
+def test_numerical_outliers_generate_recommendation():
+    df = pd.DataFrame({
+        "sales": [
+            100, 102, 98, 101, 99,
+            103, 97, 100, 101, 1000,
+        ]
+    })
+
+    recommendations = generate_business_recommendations(
+        df, []
+    )
+
+    outlier_recommendations = [
+        item for item in recommendations
+        if item["rule_id"] == "numerical_outliers:sales"
+    ]
+
+    assert len(outlier_recommendations) == 1
+
+    recommendation = outlier_recommendations[0]
+
+    assert recommendation["category"] == "data_quality"
+    assert recommendation["priority"] in {"high", "medium"}
+    assert "sales" in recommendation["title"]
+    assert "outlier" in recommendation["finding"].lower() or (
+        "outside the IQR-based expected range"
+        in recommendation["finding"]
+    )
+
+
+def test_numerical_outliers_skip_identifier_columns():
+    df = pd.DataFrame({
+        "customer_id": list(range(1, 10)) + [10000],
+    })
+
+    recommendations = generate_business_recommendations(
+        df, []
+    )
+
+    assert not any(
+        item["rule_id"] == "numerical_outliers:customer_id"
+        for item in recommendations
+    )
+
+
+def test_numerical_outliers_skip_small_samples():
+    df = pd.DataFrame({
+        "sales": [10, 11, 12, 13, 1000, 14, 15, 16, 17],
+    })
+
+    recommendations = generate_business_recommendations(
+        df, []
+    )
+
+    assert not any(
+        item["rule_id"] == "numerical_outliers:sales"
+        for item in recommendations
+    )
+
+
+def test_numerical_outliers_skip_constant_columns():
+    df = pd.DataFrame({
+        "sales": [100] * 12,
+    })
+
+    recommendations = generate_business_recommendations(
+        df, []
+    )
+
+    assert not any(
+        item["rule_id"] == "numerical_outliers:sales"
+        for item in recommendations
+    )
+
+
+def test_numerical_outliers_skip_columns_without_outliers():
+    df = pd.DataFrame({
+        "sales": list(range(10, 22)),
+    })
+
+    recommendations = generate_business_recommendations(
+        df, []
+    )
+
+    assert not any(
+        item["rule_id"] == "numerical_outliers:sales"
+        for item in recommendations
+    )
+
+
+def test_numerical_outliers_handle_missing_values():
+    df = pd.DataFrame({
+        "sales": [
+            100, 102, 98, 101, 99,
+            103, 97, 100, 101, 1000,
+            np.nan,
+        ]
+    })
+
+    recommendations = generate_business_recommendations(
+        df, []
+    )
+
+    assert any(
+        item["rule_id"] == "numerical_outliers:sales"
+        for item in recommendations
+    )
