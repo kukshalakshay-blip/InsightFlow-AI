@@ -127,58 +127,131 @@ def generate_business_recommendations(
         (
             column
             for column in df.columns
-            if column.lower() == "profit"
-            and pd.api.types.is_numeric_dtype(df[column])
+            if (
+                column.lower() == "profit"
+                and pd.api.types.is_numeric_dtype(df[column])
+                and not pd.api.types.is_bool_dtype(df[column])
+            )
         ),
         None,
     )
 
+    consolidated_margin_columns = set()
+
     if profit_column is not None:
 
         profit_values = df[profit_column].dropna()
+        negative_profit_count = int(
+            (profit_values < 0).sum()
+        )
 
-        if not profit_values.empty:
+        if negative_profit_count > 0:
+            negative_profit_percentage = (
+                negative_profit_count / len(profit_values)
+            ) * 100
 
-            negative_profit_count = int(
-                (profit_values < 0).sum()
+            # Identify margin columns with exactly the same
+            # negative-value records as the profit column.
+            matching_margin_columns = []
+
+            profit_negative_mask = (
+                df[profit_column]
+                .lt(0)
+                .fillna(False)
+                .to_numpy(dtype=bool)
             )
 
-            if negative_profit_count > 0:
+            for column in df.columns:
+                if (
+                    "margin" not in column.lower()
+                    or not pd.api.types.is_numeric_dtype(df[column])
+                    or pd.api.types.is_bool_dtype(df[column])
+                ):
+                    continue
 
-                negative_profit_percentage = (
-                    negative_profit_count
-                    / len(profit_values)
-                ) * 100
-
-                recommendations.append(
-                    {
-                        "rule_id": "negative_profit",
-                        "category": "profitability",
-                        "priority": (
-                            "high"
-                            if negative_profit_percentage >= 10
-                            else "medium"
-                        ),
-                        "title": "Investigate loss-making records",
-                        "finding": (
-                            f"{negative_profit_count:,} records have "
-                            f"negative profit "
-                            f"({negative_profit_percentage:.2f}% "
-                            f"of valid profit records)."
-                        ),
-                        "action": (
-                            "Investigate loss-making records by "
-                            "product, customer segment, region, "
-                            "and discount level where available."
-                        ),
-                        "rationale": (
-                            "Understanding where losses occur can "
-                            "help identify opportunities for further "
-                            "profitability analysis."
-                        ),
-                    }
+                margin_negative_mask = (
+                    df[column]
+                    .lt(0)
+                    .fillna(False)
+                    .to_numpy(dtype=bool)
                 )
 
+                if (
+                    margin_negative_mask.shape == profit_negative_mask.shape
+                    and (margin_negative_mask == profit_negative_mask).all()
+                ):
+                    matching_margin_columns.append(column)
+
+            consolidated_margin_columns.update(
+                matching_margin_columns
+            )
+
+            # Build one finding when both metrics flag
+            # exactly the same records.
+            if matching_margin_columns:
+                margin_details = []
+
+                for column in matching_margin_columns:
+                    margin_values = df[column].dropna()
+
+                    margin_count = int(
+                        (margin_values < 0).sum()
+                    )
+
+                    margin_percentage = (
+                        margin_count / len(margin_values)
+                    ) * 100
+
+                    margin_details.append(
+                        f"{column}: {margin_count:,} negative records "
+                        f"({margin_percentage:.2f}% of valid records)"
+                    )
+
+                title = (
+                    "Investigate overlapping profitability losses"
+                )
+
+                finding = (
+                    f"{negative_profit_count:,} records have negative "
+                    f"profit ({negative_profit_percentage:.2f}% "
+                    f"of valid profit records). The same records also "
+                    f"have negative values in: "
+                    f"{'; '.join(margin_details)}."
+                )
+
+            else:
+                title = "Investigate loss-making records"
+
+                finding = (
+                    f"{negative_profit_count:,} records have "
+                    f"negative profit "
+                    f"({negative_profit_percentage:.2f}% "
+                    f"of valid profit records)."
+                )
+
+            recommendations.append(
+                {
+                    "rule_id": "negative_profit",
+                    "category": "profitability",
+                    "priority": (
+                        "high"
+                        if negative_profit_percentage >= 10
+                        else "medium"
+                    ),
+                    "title": title,
+                    "finding": finding,
+                    "action": (
+                        "Investigate loss-making records by "
+                        "product, customer segment, region, "
+                        "and discount level where available."
+                    ),
+                    "rationale": (
+                        "Understanding where losses occur can "
+                        "help identify opportunities for further "
+                        "profitability analysis."
+                    ),
+                }
+            )
     # ======================================================
     # 4. PROFITABILITY: NEGATIVE PROFIT MARGIN
     # ======================================================
@@ -189,10 +262,14 @@ def generate_business_recommendations(
         if (
             "margin" in column.lower()
             and pd.api.types.is_numeric_dtype(df[column])
+            and not pd.api.types.is_bool_dtype(df[column])
         )
     ]
 
     for column in margin_columns:
+
+        if column in consolidated_margin_columns:
+            continue
 
         margin_values = df[column].dropna()
 
@@ -249,7 +326,10 @@ def generate_business_recommendations(
     numeric_columns = [
         column
         for column in df.columns
-        if pd.api.types.is_numeric_dtype(df[column])
+        if (
+            pd.api.types.is_numeric_dtype(df[column])
+            and not pd.api.types.is_bool_dtype(df[column])
+        )
     ]
 
     discount_columns = [
@@ -263,8 +343,10 @@ def generate_business_recommendations(
     profitability_columns = [
         column
         for column in numeric_columns
-        if column.lower() == "profit"
-        or "profit_margin" in column.lower()
+        if (
+            column.lower() == "profit"
+            or "profit_margin" in column.lower()
+        )
     ]
 
     for discount_column in discount_columns:
@@ -330,6 +412,9 @@ def generate_business_recommendations(
         y_column = visualization.get("y")
 
         if not x_column or not y_column:
+            continue
+
+        if x_column not in df.columns or y_column not in df.columns:
             continue
 
         metric_name = y_column.lower()
@@ -398,51 +483,64 @@ def generate_business_recommendations(
             }
         )
 
-
-        # ======================================================
+    # ======================================================
     # 7. DATA QUALITY: NUMERICAL OUTLIERS
     # ======================================================
 
-    identifier_keywords = (
+    # Exclude known identifiers, categorical codes, and
+    # numeric date components from general outlier analysis.
+    excluded_columns = {
         "id",
-        "identifier",
-        "index",
+        "row_id",
         "postal_code",
         "zip_code",
-        "phone",
+        "order_year",
+        "order_month",
+        "order_quarter",
+    }
+
+    identifier_keywords = (
+        "identifier",
+        "customer_id",
+        "product_id",
+        "order_id",
         "account_number",
         "transaction_number",
+        "phone",
     )
 
     for column in df.columns:
 
-        # Only inspect numeric columns.
-        if not pd.api.types.is_numeric_dtype(df[column]):
+        column_name = str(column).lower().strip()
+
+        # Exclude known identifiers and date components.
+        if column_name in excluded_columns:
             continue
 
-        column_name = column.lower().strip()
-
-        # Avoid treating identifiers as continuous measurements.
-        is_identifier = (
-            column_name == "id"
-            or column_name.endswith("_id")
+        if (
+            column_name.endswith("_id")
             or column_name.startswith("id_")
             or any(
                 keyword in column_name
-                for keyword in identifier_keywords[1:]
+                for keyword in identifier_keywords
             )
-        )
+        ):
+            continue
 
-        if is_identifier:
+        # Only inspect numeric measurements, not Boolean flags.
+        if (
+            not pd.api.types.is_numeric_dtype(df[column])
+            or pd.api.types.is_bool_dtype(df[column])
+        ):
             continue
 
         valid_values = df[column].dropna()
 
-        # Require enough observations for a meaningful IQR analysis.
+        # Require enough observations for meaningful analysis.
         if len(valid_values) < 10:
             continue
 
-        # Constant columns cannot provide useful outlier findings.
+        # Skip constant columns.
         if valid_values.nunique() < 2:
             continue
 
@@ -451,18 +549,36 @@ def generate_business_recommendations(
         outlier_count = result["outlier_count"]
         outlier_percentage = result["outlier_percentage"]
 
+        lower_bound = result["lower_bound"]
+        upper_bound = result["upper_bound"]
+
+        valid_values = df[column].dropna()
+        valid_values = valid_values[
+            valid_values.map(lambda value: pd.notna(value))
+        ]
+
+        low_outlier_count = int(
+            (valid_values < lower_bound).sum()
+        )
+
+        high_outlier_count = int(
+            (valid_values > upper_bound).sum()
+        )
+
         if outlier_count == 0:
             continue
 
-        # Avoid overemphasizing columns where nearly all values
-        # fall outside the IQR fences.
+        # Skip columns where a quarter or more of observations
+        # are flagged by the IQR method.
         if outlier_percentage >= 25:
             continue
 
+        # Statistical extremeness alone does not establish
+        # business severity.
         priority = (
-            "high"
+            "medium"
             if outlier_percentage >= 5
-            else "medium"
+            else "low"
         )
 
         recommendations.append(
@@ -470,32 +586,36 @@ def generate_business_recommendations(
                 "rule_id": f"numerical_outliers:{column}",
                 "category": "data_quality",
                 "priority": priority,
-                "title": f"Investigate unusual values in {column}",
-                "finding": (
-                    f"{outlier_count:,} records in {column} "
-                    f"fall outside the IQR-based expected range "
-                    f"({outlier_percentage:.2f}% of valid records). "
-                    f"The lower and upper bounds are "
-                    f"{result['lower_bound']:.4g} and "
-                    f"{result['upper_bound']:.4g}, respectively."
+                "title": (
+                    f"Review statistically unusual values in {column}"
                 ),
+                "finding": (
+    f"{outlier_count:,} records in '{column}' "
+    f"fall outside the IQR outlier bounds "
+    f"({outlier_percentage:.2f}% of valid records): "
+    f"{low_outlier_count:,} below the lower bound "
+    f"({lower_bound:.4g}) and "
+    f"{high_outlier_count:,} above the upper bound "
+    f"({upper_bound:.4g})."
+),
                 "action": (
-                    f"Inspect the unusual values in {column} "
-                    "to determine whether they represent data-entry "
-                    "errors, legitimate extreme observations, "
-                    "or a distinct population."
+                    f"Inspect the records flagged in '{column}' "
+                    "and compare them with relevant business context. "
+                    "Determine whether the values are legitimate "
+                    "extremes, data-quality issues, or evidence "
+                    "of a distinct subgroup."
                 ),
                 "rationale": (
-                    "Unusual numerical observations can influence "
-                    "aggregates and statistical analysis. "
-                    "An outlier is not necessarily an error and "
-                    "should be investigated in context."
+                    "IQR detection identifies statistical extremes, "
+                    "not necessarily errors or business-rule "
+                    "violations. Review the observations before "
+                    "taking corrective action."
                 ),
             }
-        )    
+        )
 
     # ======================================================
-    # 7. DEDUPLICATE RECOMMENDATIONS
+    # 8. DEDUPLICATE RECOMMENDATIONS
     # ======================================================
 
     unique_recommendations = []
@@ -515,7 +635,7 @@ def generate_business_recommendations(
         )
 
     # ======================================================
-    # 8. PRIORITIZE RECOMMENDATIONS
+    # 9. PRIORITIZE RECOMMENDATIONS
     # ======================================================
 
     priority_order = {

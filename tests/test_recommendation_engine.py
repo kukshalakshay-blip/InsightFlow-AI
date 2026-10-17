@@ -373,6 +373,34 @@ def test_negative_profit_margin_generates_recommendation():
     assert len(matches) == 1
 
 
+def test_matching_negative_profit_and_margin_are_consolidated():
+    df = pd.DataFrame({
+        "profit": [100, -20, 50, -10, 80],
+        "profit_margin": [0.20, -0.10, 0.15, -0.05, 0.25],
+    })
+
+    recommendations = get_recommendations(df)
+
+    profitability_recommendations = [
+        recommendation
+        for recommendation in recommendations
+        if (
+            recommendation["rule_id"] == "negative_profit"
+            or recommendation["rule_id"].startswith(
+                "negative_margin:"
+            )
+        )
+    ]
+
+    assert len(profitability_recommendations) == 1
+    assert "negative profit" in (
+        profitability_recommendations[0]["finding"].lower()
+    )
+    assert "profit_margin" in (
+        profitability_recommendations[0]["finding"]
+    )
+
+
 def test_multiple_margin_columns_are_checked():
     df = pd.DataFrame({
         "profit_margin": [0.2, -0.1, 0.3],
