@@ -160,9 +160,13 @@ def detect_outliers(
             "outlier_percentage": 0.0,
         }
 
-    if not pd.api.types.is_numeric_dtype(series):
+    if (
+        not pd.api.types.is_numeric_dtype(series)
+        or pd.api.types.is_bool_dtype(series)
+    ):
         raise TypeError(
-            f"Column '{column}' must contain numerical data."
+            f"Column '{column}' must contain numeric values, "
+            "not Boolean or non-numeric values."
         )
 
     # Convert to numeric values and exclude NaN, infinity,
