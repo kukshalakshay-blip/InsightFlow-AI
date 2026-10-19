@@ -105,6 +105,22 @@ IMPORTANT RULES:
 6. Recommendations must be practical and connected to the findings.
 7. If the available information is insufficient for a claim,
    say so instead of guessing.
+8. Distinguish observed facts from interpretations and hypotheses.
+9. When stating a numerical finding, preserve its actual value
+   and meaning from the supplied context.
+10. Do not imply that a correlation, statistical outlier, or
+    unusual pattern proves a business cause or data error.
+11. Explain the evidence supporting an important conclusion
+    whenever that evidence is available in the context.
+12. If the context contains conflicting or insufficient evidence,
+    acknowledge the limitation instead of forcing a conclusion.
+13. Treat business_recommendations as rule-based findings and
+    suggested actions, not as proof of causation.
+14. Preserve the distinction between observed_finding,
+    suggested_action, and rationale.
+15. Do not describe a suggested action as an action already taken.
+16. Prioritize high-priority findings when discussing business risks,
+    while considering the supporting evidence.
 
 ANALYTICAL CONTEXT:
 

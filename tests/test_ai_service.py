@@ -220,6 +220,14 @@ def test_generate_ai_analysis_includes_context_in_prompt(
     assert "150000" in call_kwargs["input"]
     assert "15" in call_kwargs["input"]
 
+    assert "Distinguish observed facts from interpretations" in (
+        call_kwargs["input"]
+    )
+
+    assert "Do not imply that a correlation" in (
+        call_kwargs["input"]
+    )
+
 
 # ==========================================================
 # INVALID RESPONSE TESTS

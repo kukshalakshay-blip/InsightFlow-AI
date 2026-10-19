@@ -226,20 +226,19 @@ analysis_context = build_analysis_context(
 )
 
 
-# Add deterministic business recommendations to the context.
+# Add deterministic business recommendations to the AI context.
 analysis_context["business_recommendations"] = [
     {
         "rule_id": item["rule_id"],
         "category": item["category"],
         "priority": item["priority"],
         "title": item["title"],
-        "finding": item["finding"],
-        "action": item["action"],
+        "observed_finding": item["finding"],
+        "suggested_action": item["action"],
         "rationale": item["rationale"],
     }
     for item in business_recommendations
 ]
-
 
 # ==========================================================
 # DATASET SIGNATURE
