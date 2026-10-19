@@ -441,6 +441,32 @@ def test_build_analysis_context_calculates_numeric_metrics(
     assert context["metrics"]["sales"]["total"] == pytest.approx(1500)
 
 
+def test_build_analysis_context_excludes_non_finite_values():
+    df = pd.DataFrame({
+        "sales": [
+            100.0,
+            200.0,
+            300.0,
+            np.inf,
+            -np.inf,
+            np.nan,
+        ]
+    })
+
+    context = build_analysis_context(
+        df,
+        [],
+    )
+
+    metrics = context["metrics"]["sales"]
+
+    assert metrics["mean"] == pytest.approx(200)
+    assert metrics["median"] == pytest.approx(200)
+    assert metrics["min"] == pytest.approx(100)
+    assert metrics["max"] == pytest.approx(300)
+    assert metrics["total"] == pytest.approx(600)
+
+
 def test_build_analysis_context_includes_deterministic_findings(
     sales_dataframe,
 ):

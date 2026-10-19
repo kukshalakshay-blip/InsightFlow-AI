@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from app.services.analysis_engine import (
@@ -42,8 +43,11 @@ def build_analysis_context(
     ).columns
 
     for column in numeric_columns:
-
         series = df[column].dropna()
+
+        series = series[
+            np.isfinite(series)
+        ]
 
         if series.empty:
             continue
