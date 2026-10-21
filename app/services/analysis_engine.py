@@ -6,15 +6,9 @@ def analyze_trend(
     df: pd.DataFrame,
     x_column: str,
     y_column: str,
-    frequency: str = "D",
+    frequency: str = "ME",
 ) -> pd.DataFrame:
-    """
-    Prepare time-series data for trend analysis.
-
-    Converts the x-axis column to datetime, removes invalid
-    values, calculates the mean y-value for each date, and
-    sorts the result chronologically.
-    """
+    """Aggregate numeric values over time for a readable trend chart."""
 
     trend_data = df[[x_column, y_column]].copy()
 
@@ -24,20 +18,28 @@ def analyze_trend(
         format="mixed",
     )
 
+    trend_data[y_column] = pd.to_numeric(
+        trend_data[y_column],
+        errors="coerce",
+    )
+
     trend_data = trend_data.dropna(
         subset=[x_column, y_column]
     )
 
+    if trend_data.empty:
+        return pd.DataFrame(columns=[x_column, y_column])
+
     trend_data = (
         trend_data
-        .set_index(x_column)
-        .resample(frequency)[y_column]
+        .set_index(x_column)[y_column]
+        .resample(frequency)
         .mean()
+        .dropna()
         .reset_index()
     )
 
     return trend_data
-
 
 def analyze_correlation(
     df: pd.DataFrame,

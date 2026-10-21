@@ -89,9 +89,9 @@ def render_line(
     y_column = recommendation["y"]
 
     frequency = recommendation.get(
-        "frequency",
-        "D",
-    )
+    "frequency",
+    "ME",
+)
 
     chart_data = analyze_trend(
         df,
