@@ -337,10 +337,16 @@ def generate_insight(
         x_column = recommendation["x"]
         y_column = recommendation["y"]
 
+        frequency = recommendation.get(
+            "frequency",
+            "D",
+        )
+
         chart_data = analyze_trend(
             df,
             x_column,
             y_column,
+            frequency,
         )
 
         if chart_data.empty:
@@ -355,37 +361,108 @@ def generate_insight(
                 f"analyze the trend of {y_column}."
             )
 
-        first_value = chart_data[y_column].iloc[0]
-        last_value = chart_data[y_column].iloc[-1]
+        values = chart_data[y_column].astype(float).to_numpy()
+
+        first_value = values[0]
+        last_value = values[-1]
+
+        # --------------------------------------------------
+        # 1. Calculate endpoint change
+        # --------------------------------------------------
 
         if first_value == 0:
-            return (
-                f"{y_column} changed from "
-                f"{first_value:,.2f} to "
-                f"{last_value:,.2f} over the observed period."
+            endpoint_change_text = (
+                f"changed from {first_value:,.2f} "
+                f"to {last_value:,.2f}"
+            )
+        else:
+            endpoint_change = (
+                (last_value - first_value)
+                / abs(first_value)
+            ) * 100
+
+            if endpoint_change > 0:
+                endpoint_direction = "increased"
+            elif endpoint_change < 0:
+                endpoint_direction = "decreased"
+            else:
+                endpoint_direction = "remained unchanged"
+
+            endpoint_change_text = (
+                f"{endpoint_direction} by "
+                f"{abs(endpoint_change):.1f}%, "
+                f"from {first_value:,.2f} "
+                f"to {last_value:,.2f}"
             )
 
-        percentage_change = (
-            (last_value - first_value)
-            / abs(first_value)
-        ) * 100
+                # --------------------------------------------------
+        # 2. Estimate the overall linear trend
+        # --------------------------------------------------
 
-        if percentage_change > 0:
-            direction = "increased"
+        periods = np.arange(len(values), dtype=float)
 
-        elif percentage_change < 0:
-            direction = "decreased"
-
-        else:
-            direction = "remained stable"
-
-        return (
-            f"Average {y_column} {direction} by "
-            f"{abs(percentage_change):.1f}% "
-            f"over the observed period, changing from "
-            f"{first_value:,.2f} to {last_value:,.2f}."
+        slope, intercept = np.polyfit(
+            periods,
+            values,
+            1,
         )
 
+        fitted_values = intercept + slope * periods
+
+        residual_sum_squares = np.sum(
+            (values - fitted_values) ** 2
+        )
+
+        total_sum_squares = np.sum(
+            (values - np.mean(values)) ** 2
+        )
+
+        if total_sum_squares > 0:
+            r_squared = 1 - (
+                residual_sum_squares / total_sum_squares
+            )
+            r_squared = float(np.clip(r_squared, 0, 1))
+        else:
+            r_squared = None
+
+                # --------------------------------------------------
+        # 3. Describe trend direction and fit strength
+        # --------------------------------------------------
+
+        if slope > 0:
+            trend_direction = "upward"
+        elif slope < 0:
+            trend_direction = "downward"
+        else:
+            trend_direction = "flat"
+
+        if r_squared is None:
+            trend_summary = (
+                "The values are constant, so the linear "
+                "model's explanatory strength is undefined."
+            )
+
+        else:
+            if r_squared >= 0.70:
+                fit_strength = "strong"
+            elif r_squared >= 0.40:
+                fit_strength = "moderate"
+            else:
+                fit_strength = "weak"
+
+            trend_summary = (
+                f"The fitted linear trend is {trend_direction}, "
+                f"with a {fit_strength} linear fit "
+                f"(R² = {r_squared:.2f}). "
+                f"The model explains approximately "
+                f"{r_squared * 100:.1f}% of the observed variation."
+            )
+
+        return (
+            f"{y_column} {endpoint_change_text} between "
+            f"the first and last observed periods. "
+            f"{trend_summary}"
+        )
     # ==================================================
     # 5. MAP
     # ==================================================
