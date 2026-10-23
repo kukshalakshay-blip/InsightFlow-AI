@@ -483,12 +483,10 @@ def generate_business_recommendations(
             }
         )
 
-    # ======================================================
+        # ======================================================
     # 7. DATA QUALITY: NUMERICAL OUTLIERS
     # ======================================================
 
-    # Exclude known identifiers, categorical codes, and
-    # numeric date components from general outlier analysis.
     excluded_columns = {
         "id",
         "row_id",
@@ -509,11 +507,12 @@ def generate_business_recommendations(
         "phone",
     )
 
+    outlier_findings = []
+
     for column in df.columns:
 
         column_name = str(column).lower().strip()
 
-        # Exclude known identifiers and date components.
         if column_name in excluded_columns:
             continue
 
@@ -527,7 +526,6 @@ def generate_business_recommendations(
         ):
             continue
 
-        # Only inspect numeric measurements, not Boolean flags.
         if (
             not pd.api.types.is_numeric_dtype(df[column])
             or pd.api.types.is_bool_dtype(df[column])
@@ -536,84 +534,118 @@ def generate_business_recommendations(
 
         valid_values = df[column].dropna()
 
-        # Require enough observations for meaningful analysis.
-        if len(valid_values) < 10:
-            continue
-
-        # Skip constant columns.
-        if valid_values.nunique() < 2:
+        if len(valid_values) < 10 or valid_values.nunique() < 2:
             continue
 
         result = detect_outliers(df, column)
 
-        outlier_count = result["outlier_count"]
-        outlier_percentage = result["outlier_percentage"]
+        outlier_count = int(result["outlier_count"])
+        outlier_percentage = float(result["outlier_percentage"])
 
         lower_bound = result["lower_bound"]
         upper_bound = result["upper_bound"]
 
-        valid_values = df[column].dropna()
-        valid_values = valid_values[
-            valid_values.map(lambda value: pd.notna(value))
-        ]
-
-        low_outlier_count = int(
-            (valid_values < lower_bound).sum()
-        )
-
-        high_outlier_count = int(
-            (valid_values > upper_bound).sum()
-        )
-
-        if outlier_count == 0:
+        if outlier_count == 0 or outlier_percentage >= 25:
             continue
 
-        # Skip columns where a quarter or more of observations
-        # are flagged by the IQR method.
-        if outlier_percentage >= 25:
-            continue
+        low_count = int((valid_values < lower_bound).sum())
+        high_count = int((valid_values > upper_bound).sum())
 
-        # Statistical extremeness alone does not establish
-        # business severity.
+        outlier_findings.append({
+            "column": column,
+            "count": outlier_count,
+            "percentage": outlier_percentage,
+            "low_count": low_count,
+            "high_count": high_count,
+            "lower_bound": lower_bound,
+            "upper_bound": upper_bound,
+        })
+
+    # Rank by the proportion of valid records flagged.
+    # This is a screening priority, not a measure of business loss.
+    outlier_findings.sort(
+        key=lambda item: (
+            item["percentage"],
+            item["count"],
+        ),
+        reverse=True,
+    )
+
+    # Keep individual recommendations for the strongest signals.
+    # Summarize remaining columns to reduce repetitive output.
+    individual_limit = 3
+
+    for item in outlier_findings[:individual_limit]:
+
+        column = item["column"]
+
         priority = (
             "medium"
-            if outlier_percentage >= 5
+            if item["percentage"] >= 5
             else "low"
         )
 
-        recommendations.append(
-            {
-                "rule_id": f"numerical_outliers:{column}",
-                "category": "data_quality",
-                "priority": priority,
-                "title": (
-                    f"Review statistically unusual values in {column}"
-                ),
-                "finding": (
-    f"{outlier_count:,} records in '{column}' "
-    f"fall outside the IQR outlier bounds "
-    f"({outlier_percentage:.2f}% of valid records): "
-    f"{low_outlier_count:,} below the lower bound "
-    f"({lower_bound:.4g}) and "
-    f"{high_outlier_count:,} above the upper bound "
-    f"({upper_bound:.4g})."
-),
-                "action": (
-                    f"Inspect the records flagged in '{column}' "
-                    "and compare them with relevant business context. "
-                    "Determine whether the values are legitimate "
-                    "extremes, data-quality issues, or evidence "
-                    "of a distinct subgroup."
-                ),
-                "rationale": (
-                    "IQR detection identifies statistical extremes, "
-                    "not necessarily errors or business-rule "
-                    "violations. Review the observations before "
-                    "taking corrective action."
-                ),
-            }
+        recommendations.append({
+            "rule_id": f"numerical_outliers:{column}",
+            "category": "data_quality",
+            "priority": priority,
+            "title": f"Review statistically unusual values in {column}",
+            "finding": (
+                f"IQR outlier detection identified "
+                f"{item['count']:,} outlier(s) in '{column}' "
+                f"({item['percentage']:.2f}% of valid records): "
+                f"{item['low_count']:,} below the lower bound "
+                f"({item['lower_bound']:.4g}) and "
+                f"{item['high_count']:,} above the upper bound "
+                f"({item['upper_bound']:.4g})."
+            ),
+            "action": (
+                f"Inspect the flagged records in '{column}' and "
+                "compare them with relevant business context. "
+                "Determine whether they are legitimate extremes, "
+                "data-quality issues, or a distinct subgroup."
+            ),
+                    "rationale": (
+            "IQR detection identifies statistical extremes, "
+            "not necessarily errors or business-rule violations. "
+            "Some observations may overlap with other business "
+            "findings, so review related recommendations together."
+        ),
+        })
+
+    remaining_findings = outlier_findings[individual_limit:]
+
+    if remaining_findings:
+
+        summary_details = "; ".join(
+            (
+                f"{item['column']}: {item['count']:,} records "
+                f"({item['percentage']:.2f}%)"
+            )
+            for item in remaining_findings
         )
 
+        recommendations.append({
+            "rule_id": "numerical_outliers:summary",
+            "category": "data_quality",
+            "priority": "low",
+            "title": "Review unusual values across additional measures",
+            "finding": (
+                f"IQR screening identified unusual values in "
+                f"{len(remaining_findings)} additional columns: "
+                f"{summary_details}."
+            ),
+            "action": (
+                "Review these columns together and investigate "
+                "the observations with the greatest relevance "
+                "to the analysis."
+            ),
+            "rationale": (
+                "Grouping additional outlier findings reduces "
+                "repetition while preserving the evidence needed "
+                "to decide which observations merit investigation."
+            ),
+        })
     # ======================================================
     # 8. DEDUPLICATE RECOMMENDATIONS
     # ======================================================
