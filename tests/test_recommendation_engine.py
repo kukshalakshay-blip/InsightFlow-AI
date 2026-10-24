@@ -311,6 +311,40 @@ def test_negative_profit_finding_reports_correct_count():
     assert "2 records have negative profit" in recommendation["finding"]
     assert "40.00%" in recommendation["finding"]
 
+def test_negative_profit_finding_reports_total_recorded_losses():
+    df = pd.DataFrame({
+        "profit": [-100, -50, 200, -25, 300],
+    })
+
+    recommendations = get_recommendations(df)
+
+    recommendation = get_recommendations_by_rule(
+        recommendations,
+        "negative_profit",
+    )[0]
+
+    assert "175.00 in total recorded losses" in (
+        recommendation["finding"]
+    )
+
+
+def test_negative_profit_total_losses_ignore_missing_values():
+    df = pd.DataFrame({
+        "profit": [-100, None, -50, 200],
+    })
+
+    recommendations = get_recommendations(df)
+
+    recommendation = get_recommendations_by_rule(
+        recommendations,
+        "negative_profit",
+    )[0]
+
+    assert "150.00 in total recorded losses" in (
+        recommendation["finding"]
+    )
+
+
 
 def test_negative_profit_has_high_priority_at_ten_percent():
     df = pd.DataFrame({

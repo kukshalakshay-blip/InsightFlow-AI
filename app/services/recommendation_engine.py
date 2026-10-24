@@ -162,8 +162,16 @@ def generate_business_recommendations(
     if profit_column is not None:
 
         profit_values = df[profit_column].dropna()
+
+        negative_profit_mask = profit_values < 0
+
         negative_profit_count = int(
-            (profit_values < 0).sum()
+            negative_profit_mask.sum()
+        )
+
+        # Sum the absolute values of negative profits.
+        total_recorded_losses = float(
+            -profit_values.loc[negative_profit_mask].sum()
         )
 
         if negative_profit_count > 0:
@@ -235,8 +243,9 @@ def generate_business_recommendations(
                 finding = (
                     f"{negative_profit_count:,} records have negative "
                     f"profit ({negative_profit_percentage:.2f}% "
-                    f"of valid profit records). The same records also "
-                    f"have negative values in: "
+                    f"of valid profit records), representing "
+                    f"{total_recorded_losses:,.2f} in total recorded losses. "
+                    f"The same records also have negative values in: "
                     f"{'; '.join(margin_details)}."
                 )
 
@@ -247,7 +256,9 @@ def generate_business_recommendations(
                     f"{negative_profit_count:,} records have "
                     f"negative profit "
                     f"({negative_profit_percentage:.2f}% "
-                    f"of valid profit records)."
+                    f"of valid profit records), representing "
+                    f"{total_recorded_losses:,.2f} "
+                    f"in total recorded losses."
                 )
 
             recommendations.append(
