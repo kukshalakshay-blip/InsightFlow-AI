@@ -666,7 +666,7 @@ def generate_business_recommendations(
             recommendation
         )
 
-    # ======================================================
+        # ======================================================
     # 9. PRIORITIZE RECOMMENDATIONS
     # ======================================================
 
@@ -676,11 +676,30 @@ def generate_business_recommendations(
         "low": 2,
     }
 
-    unique_recommendations.sort(
-        key=lambda item: priority_order.get(
-            item["priority"],
-            3,
+    # Secondary ordering reflects the type of finding,
+    # not a claim that unlike statistical measures are comparable.
+    rule_order = {
+        "missing_data": 0,
+        "duplicate_rows": 1,
+        "negative_profit": 2,
+        "negative_margin": 3,
+        "discount_relationship": 4,
+        "declining_sales": 5,
+        "numerical_outliers": 6,
+    }
+
+    def recommendation_sort_key(item):
+        rule_id = item.get("rule_id", "")
+        rule_family = rule_id.split(":")[0]
+
+        return (
+            priority_order.get(item.get("priority"), 3),
+            rule_order.get(rule_family, 99),
+            rule_id,
         )
+
+    unique_recommendations.sort(
+        key=recommendation_sort_key
     )
 
     return unique_recommendations
