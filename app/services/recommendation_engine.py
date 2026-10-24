@@ -6,6 +6,86 @@ from app.services.analysis_engine import (
     detect_outliers,
 )
 
+def summarize_loss_contributors(
+    df: pd.DataFrame,
+    profit_column: str = "profit",
+    grouping_columns: tuple[str, ...] = (
+        "category",
+        "region",
+    ),
+    top_n: int = 3,
+) -> list[str]:
+    """Summarize leading groups by total recorded negative profit."""
+
+    if (
+        profit_column not in df.columns
+        or not pd.api.types.is_numeric_dtype(df[profit_column])
+        or pd.api.types.is_bool_dtype(df[profit_column])
+        or top_n < 1
+    ):
+        return []
+
+    profit_values = df[profit_column]
+
+    loss_mask = profit_values.notna() & (profit_values < 0)
+
+    if not loss_mask.any():
+        return []
+
+    loss_rows = df.loc[loss_mask]
+
+    details = []
+
+    for column in grouping_columns:
+        if column not in loss_rows.columns:
+            continue
+
+        # Exclude missing group labels instead of presenting them
+        # as a named category or region.
+        grouped_rows = loss_rows.loc[
+            loss_rows[column].notna()
+        ]
+
+        if grouped_rows.empty:
+            continue
+
+        summary = (
+            grouped_rows
+            .groupby(column, observed=True)[profit_column]
+            .agg(
+                loss_records=lambda values: int(
+                    (values < 0).sum()
+                ),
+                total_loss=lambda values: float(
+                    -values.sum()
+                ),
+            )
+            .reset_index()
+            .sort_values(
+                ["total_loss", "loss_records"],
+                ascending=[False, False],
+                kind="stable",
+            )
+            .head(top_n)
+        )
+
+        if summary.empty:
+            continue
+
+        group_details = "; ".join(
+            (
+                f"{row[column]}: "
+                f"{row['total_loss']:,.2f} in recorded losses "
+                f"across {int(row['loss_records']):,} records"
+            )
+            for _, row in summary.iterrows()
+        )
+
+        details.append(
+            f"Top {column} contributors: {group_details}."
+        )
+
+    return details
 
 # ==========================================================
 # RECOMMENDATION ENGINE
@@ -174,6 +254,11 @@ def generate_business_recommendations(
             -profit_values.loc[negative_profit_mask].sum()
         )
 
+        loss_contributor_details = summarize_loss_contributors(
+            df,
+            profit_column=profit_column,
+        )
+
         if negative_profit_count > 0:
             negative_profit_percentage = (
                 negative_profit_count / len(profit_values)
@@ -259,6 +344,11 @@ def generate_business_recommendations(
                     f"of valid profit records), representing "
                     f"{total_recorded_losses:,.2f} "
                     f"in total recorded losses."
+                )
+
+            if loss_contributor_details:
+                finding = (
+                    f"{finding} {' '.join(loss_contributor_details)}"
                 )
 
             recommendations.append(
