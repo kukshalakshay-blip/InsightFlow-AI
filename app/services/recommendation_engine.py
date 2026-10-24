@@ -36,10 +36,30 @@ def generate_business_recommendations(
     # ======================================================
 
     total_cells = df.size
-
     missing_cells = int(
         df.isna().sum().sum()
     )
+
+    # Identify columns containing missing values.
+    missing_by_column = (
+        df.isna()
+        .sum()
+        .loc[lambda counts: counts > 0]
+        .sort_values(ascending=False)
+    )
+
+    # Calculate each affected column's missing-value percentage.
+    missing_column_details = []
+
+    for column, count in missing_by_column.items():
+        column_percentage = (
+            count / len(df)
+        ) * 100
+
+        missing_column_details.append(
+            f"{column}: {count:,} "
+            f"({column_percentage:.2f}% of rows)"
+        )
 
     if total_cells > 0 and missing_cells > 0:
 
@@ -54,22 +74,23 @@ def generate_business_recommendations(
         )
 
         recommendations.append(
-            {
-                "rule_id": "missing_data",
-                "category": "data_quality",
-                "priority": priority,
-                "title": "Investigate missing data",
-                "finding": (
-                    f"The dataset contains {missing_cells:,} "
-                    f"missing cells "
-                    f"({missing_percentage:.2f}% "
-                    f"of all cells)."
-                ),
-                "action": (
-                    "Identify the affected columns and determine "
-                    "whether to correct, impute, or exclude "
-                    "the affected values."
-                ),
+    {
+        "rule_id": "missing_data",
+        "category": "data_quality",
+        "priority": priority,
+        "title": "Investigate missing data",
+        "finding": (
+            f"The dataset contains {missing_cells:,} "
+            f"missing cells "
+            f"({missing_percentage:.2f}% of all cells). "
+            f"Affected columns: "
+            f"{'; '.join(missing_column_details)}."
+        ),
+        "action": (
+            "Identify the affected columns and determine "
+            "whether to correct, impute, or exclude "
+            "the affected values."
+        ),
                 "rationale": (
                     "Missing values can reduce the reliability "
                     "of statistical analysis and business decisions."

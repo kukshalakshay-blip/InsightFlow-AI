@@ -125,6 +125,33 @@ def test_missing_data_finding_reports_correct_count():
     assert "25.00%" in recommendation["finding"]
 
 
+def test_missing_data_finding_reports_affected_columns_in_descending_order():
+    df = pd.DataFrame({
+        "customer_age": [None, None, None, 25, 30],
+        "region": ["North", None, "South", None, "East"],
+        "sales": [100, 200, 300, 400, 500],
+    })
+
+    recommendations = get_recommendations(df)
+
+    recommendation = get_recommendations_by_rule(
+        recommendations,
+        "missing_data",
+    )[0]
+
+    finding = recommendation["finding"]
+
+    # Check column-level missing counts and percentages.
+    assert "customer_age: 3 (60.00% of rows)" in finding
+    assert "region: 2 (40.00% of rows)" in finding
+
+    # Columns with more missing values should appear first.
+    assert finding.index("customer_age:") < finding.index("region:")
+
+    # Columns without missing values should not be listed.
+    assert "sales:" not in finding
+
+
 def test_missing_data_has_medium_priority_below_five_percent():
     df = pd.DataFrame({
         "sales": [100] * 100 + [None],
