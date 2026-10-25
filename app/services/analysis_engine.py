@@ -6,9 +6,18 @@ def analyze_trend(
     df: pd.DataFrame,
     x_column: str,
     y_column: str,
-    frequency: str = "ME",
+    frequency: str = "D",
 ) -> pd.DataFrame:
-    """Aggregate numeric values over time for a readable trend chart."""
+    """
+    Aggregate numeric values over time for trend analysis.
+
+    Converts the x-axis column to datetime, converts the y-axis
+    column to numeric, removes invalid observations, aggregates
+    by the requested frequency, and returns chronological results.
+
+    Daily aggregation is the default. Missing time periods are
+    preserved as NaN so that gaps remain visible in trend charts.
+    """
 
     trend_data = df[[x_column, y_column]].copy()
 
@@ -35,11 +44,13 @@ def analyze_trend(
         .set_index(x_column)[y_column]
         .resample(frequency)
         .mean()
-        .dropna()
+        .rename(y_column)
         .reset_index()
     )
 
     return trend_data
+
+
 
 def analyze_correlation(
     df: pd.DataFrame,

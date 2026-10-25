@@ -11,11 +11,18 @@ def summarize_loss_contributors(
     profit_column: str = "profit",
     grouping_columns: tuple[str, ...] = (
         "category",
+        "sub_category",
+        "subcategory",
         "region",
     ),
     top_n: int = 3,
 ) -> list[str]:
-    """Summarize leading groups by total recorded negative profit."""
+    """Summarize leading groups by total recorded negative profit.
+
+    Available grouping columns are analyzed independently. Missing columns
+    and missing group labels are skipped, so this helper also works with
+    datasets that do not contain a conventional retail schema.
+    """
 
     if (
         profit_column not in df.columns
@@ -364,8 +371,10 @@ def generate_business_recommendations(
                     "finding": finding,
                     "action": (
                         "Investigate loss-making records by "
-                        "product, customer segment, region, "
-                        "and discount level where available."
+                        "category, subcategory, product, customer segment, "
+                        "region, and discount level where available. "
+                        "Compare these patterns with sales, costs, and "
+                        "discounts before deciding on corrective action."
                     ),
                     "rationale": (
                         "Understanding where losses occur can "
