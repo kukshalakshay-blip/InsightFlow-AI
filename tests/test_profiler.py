@@ -135,3 +135,17 @@ def test_profile_handles_columns_without_rows():
     assert profile["columns"] == 2
     assert profile["column_profiles"]["sales"]["unique_percentage"] == 0
     assert profile["column_profiles"]["region"]["unique_percentage"] == 0
+
+
+def test_profile_supports_pandas_string_extension_dtype():
+    """Pandas StringDtype columns should be profiled as categorical."""
+
+    df = pd.DataFrame({
+        "region": pd.Series(["North", "South", "North"], dtype="string"),
+        "sales": [100, 200, 300],
+    })
+
+    profile = profile_dataset(df)
+
+    assert profile["categorical_columns"] == ["region"]
+    assert profile["numeric_columns"] == ["sales"]

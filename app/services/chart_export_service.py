@@ -1,3 +1,4 @@
+import logging
 from io import BytesIO
 
 import pandas as pd
@@ -5,6 +6,9 @@ import plotly.io as pio
 
 from app.services.chart_renderer import render_chart
 from app.services.visualization_engine import recommend_visualizations
+
+
+logger = logging.getLogger(__name__)
 
 
 def export_chart_to_png(
@@ -15,31 +19,8 @@ def export_chart_to_png(
 ) -> bytes:
     """
     Render a recommended Plotly chart and export it as PNG bytes.
-
-    Parameters
-    ----------
-    df:
-        Dataset used to render the chart.
-
-    recommendation:
-        Visualization recommendation from the visualization engine.
-
-    width:
-        Export image width in pixels.
-
-    height:
-        Export image height in pixels.
-
-    Returns
-    -------
-    bytes:
-        PNG image suitable for embedding in a PDF.
     """
-
-    figure = render_chart(
-        df,
-        recommendation,
-    )
+    figure = render_chart(df, recommendation)
 
     image_bytes = pio.to_image(
         figure,
@@ -59,18 +40,22 @@ def generate_chart_images(
     """
     Generate PNG images for recommended visualizations.
 
-    Individual chart failures are skipped so one unsupported
-    chart does not prevent the remaining charts from exporting.
+    Individual chart failures are logged and skipped so one
+    unsupported chart does not prevent the remaining charts
+    from exporting.
     """
-
     if max_charts <= 0:
         return []
 
     recommendations = recommend_visualizations(df)
-
     chart_images = []
 
     for recommendation in recommendations[:max_charts]:
+        chart_type = recommendation.get("type", "chart")
+        chart_title = recommendation.get(
+            "title",
+            str(chart_type).title(),
+        )
 
         try:
             image_bytes = export_chart_to_png(
@@ -80,23 +65,19 @@ def generate_chart_images(
 
             chart_images.append(
                 {
-                    "title": recommendation.get(
-                        "title",
-                        recommendation.get(
-                            "type",
-                            "Visualization",
-                        ).title(),
-                    ),
-                    "type": recommendation.get(
-                        "type",
-                        "chart",
-                    ),
+                    "title": chart_title,
+                    "type": chart_type,
                     "image": image_bytes,
                 }
             )
 
         except Exception:
-            # A failed chart must not block other charts.
+            logger.warning(
+                "Failed to export chart '%s' (type: %s).",
+                chart_title,
+                chart_type,
+                exc_info=True,
+            )
             continue
 
     return chart_images

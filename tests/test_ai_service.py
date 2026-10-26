@@ -1,4 +1,5 @@
 import json
+from google.genai import errors
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +10,17 @@ from app.services.ai_service import (
     generate_ai_analysis,
     get_gemini_client,
 )
-
+def make_server_error():
+    return errors.ServerError(
+        code=503,
+        response_json={
+            "error": {
+                "code": 503,
+                "message": "Temporary service unavailable",
+                "status": "UNAVAILABLE",
+            }
+        },
+    )
 
 # ==========================================================
 # TEST DATA
@@ -130,7 +141,8 @@ def test_gemini_client_uses_environment_api_key():
             get_gemini_client()
 
             mock_client.assert_called_once_with(
-                api_key="test-api-key"
+                api_key="test-api-key",
+                http_options={"timeout": 30_000},
             )
 
 
@@ -254,10 +266,7 @@ def test_empty_ai_response_raises_value_error(
             ):
                 generate_ai_analysis({"rows": 100})
 
-    assert (
-        mock_gemini_client.interactions.create.call_count
-        == 4
-    )
+    assert mock_gemini_client.interactions.create.call_count == 1
 
 
 def test_malformed_json_eventually_raises_validation_error(
@@ -278,10 +287,7 @@ def test_malformed_json_eventually_raises_validation_error(
             with pytest.raises(ValidationError):
                 generate_ai_analysis({"rows": 100})
 
-    assert (
-        mock_gemini_client.interactions.create.call_count
-        == 4
-    )
+    assert mock_gemini_client.interactions.create.call_count == 1
 
 
 # ==========================================================
@@ -293,7 +299,7 @@ def test_temporary_failure_then_success(
     mock_interaction,
 ):
     mock_gemini_client.interactions.create.side_effect = [
-        RuntimeError("Temporary service failure"),
+        make_server_error(),
         mock_interaction,
     ]
 
@@ -301,70 +307,65 @@ def test_temporary_failure_then_success(
         "app.services.ai_service.get_gemini_client",
         return_value=mock_gemini_client,
     ):
-        with patch(
-            "app.services.ai_service.time.sleep"
-        ) as mock_sleep:
-            result = generate_ai_analysis(
-                {"rows": 100}
-            )
+        with patch("app.services.ai_service.time.sleep") as mock_sleep:
+            result = generate_ai_analysis({"rows": 100})
 
     assert isinstance(result, AIAnalysis)
-    assert (
-        mock_gemini_client.interactions.create.call_count
-        == 2
-    )
+    assert mock_gemini_client.interactions.create.call_count == 2
     mock_sleep.assert_called_once_with(1)
 
-
-def test_retry_uses_exponential_backoff(
-    mock_gemini_client,
-):
-    mock_gemini_client.interactions.create.side_effect = (
-        RuntimeError("Temporary service failure")
-    )
+def test_retry_uses_exponential_backoff(mock_gemini_client):
+    mock_gemini_client.interactions.create.side_effect = make_server_error()
 
     with patch(
         "app.services.ai_service.get_gemini_client",
         return_value=mock_gemini_client,
     ):
-        with patch(
-            "app.services.ai_service.time.sleep"
-        ) as mock_sleep:
-            with pytest.raises(RuntimeError):
+        with patch("app.services.ai_service.time.sleep") as mock_sleep:
+            with pytest.raises(errors.ServerError):
                 generate_ai_analysis({"rows": 100})
 
-    assert (
-        mock_gemini_client.interactions.create.call_count
-        == 4
-    )
-
-    assert [
-        call.args[0]
-        for call in mock_sleep.call_args_list
-    ] == [1, 2, 4]
+    assert mock_gemini_client.interactions.create.call_count == 4
+    assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 2, 4]
 
 
-def test_final_attempt_raises_original_error(
-    mock_gemini_client,
-):
-    original_error = RuntimeError(
-        "Gemini service unavailable"
-    )
-
-    mock_gemini_client.interactions.create.side_effect = (
-        original_error
-    )
+def test_final_attempt_raises_original_error(mock_gemini_client):
+    original_error = make_server_error()
+    mock_gemini_client.interactions.create.side_effect = original_error
 
     with patch(
         "app.services.ai_service.get_gemini_client",
         return_value=mock_gemini_client,
     ):
         with patch("app.services.ai_service.time.sleep"):
-            with pytest.raises(RuntimeError) as error_info:
+            with pytest.raises(errors.ServerError) as error_info:
                 generate_ai_analysis({"rows": 100})
 
     assert error_info.value is original_error
-    assert (
-        mock_gemini_client.interactions.create.call_count
-        == 4
+    assert mock_gemini_client.interactions.create.call_count == 4
+
+def test_permanent_client_error_is_not_retried(mock_gemini_client):
+    from google.genai import errors
+
+    permanent_error = errors.ClientError(
+        code=400,
+        response_json={
+            "error": {
+                "code": 400,
+                "message": "Invalid request",
+                "status": "INVALID_ARGUMENT",
+            }
+        },
     )
+
+    mock_gemini_client.interactions.create.side_effect = permanent_error
+
+    with patch(
+        "app.services.ai_service.get_gemini_client",
+        return_value=mock_gemini_client,
+    ):
+        with pytest.raises(errors.ClientError) as error_info:
+            generate_ai_analysis({"rows": 100})
+
+    assert error_info.value is permanent_error
+    assert mock_gemini_client.interactions.create.call_count == 1

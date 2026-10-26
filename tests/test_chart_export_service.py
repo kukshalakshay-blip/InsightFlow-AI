@@ -98,3 +98,45 @@ def test_generate_chart_images_handles_chart_failures(monkeypatch):
     images = service.generate_chart_images(df)
 
     assert images == []
+
+    
+def test_generate_chart_images_logs_chart_failures(
+    monkeypatch,
+    caplog,
+):
+    import logging
+    import app.services.chart_export_service as service
+
+    df = pd.DataFrame({"revenue": [100, 200, 300]})
+
+    monkeypatch.setattr(
+        service,
+        "recommend_visualizations",
+        lambda dataframe: [
+            {
+                "type": "histogram",
+                "column": "revenue",
+                "title": "Revenue Distribution",
+            }
+        ],
+    )
+
+    def fail_export(*args, **kwargs):
+        raise RuntimeError("Simulated image export failure")
+
+    monkeypatch.setattr(
+        service,
+        "export_chart_to_png",
+        fail_export,
+    )
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="app.services.chart_export_service",
+    ):
+        images = service.generate_chart_images(df)
+
+    assert images == []
+    assert "Revenue Distribution" in caplog.text
+    assert "Simulated image export failure" in caplog.text
+

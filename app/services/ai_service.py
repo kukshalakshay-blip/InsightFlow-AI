@@ -1,22 +1,27 @@
+import logging
 import os
 import time
 
 from dotenv import load_dotenv
 from google import genai
-from pydantic import BaseModel, Field
+from google.genai import errors
+from pydantic import BaseModel, Field, ValidationError
 
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+MODEL_NAME = "gemini-3.5-flash-lite"
+MAX_RETRIES = 4
+REQUEST_TIMEOUT_MS = 30_000
 
 # ==========================================================
 # AI RESPONSE SCHEMA
 # ==========================================================
 
 class AIAnalysis(BaseModel):
-    """
-    Structured response expected from the AI analyst.
-    """
+    """Structured response expected from the AI analyst."""
 
     executive_summary: str = Field(
         description=(
@@ -53,22 +58,42 @@ class AIAnalysis(BaseModel):
 # ==========================================================
 
 def get_gemini_client():
-    """
-    Create a Gemini client using the environment API key.
-    """
+    """Create a Gemini client using the environment API key."""
 
-    api_key = os.getenv(
-        "GEMINI_API_KEY"
-    )
+    api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        raise ValueError(
-            "GEMINI_API_KEY is not configured."
-        )
+        raise ValueError("GEMINI_API_KEY is not configured.")
 
     return genai.Client(
-        api_key=api_key
+        api_key=api_key,
+        http_options={
+            "timeout": REQUEST_TIMEOUT_MS,
+        },
     )
+
+
+# ==========================================================
+# RETRY CLASSIFICATION
+# ==========================================================
+
+def _is_retryable_error(error: Exception) -> bool:
+    """Return whether a failure is likely to succeed on retry."""
+
+    if isinstance(error, errors.ServerError):
+        return True
+
+    if isinstance(error, errors.APIError):
+        # Rate limiting and transient server-side failures.
+        return getattr(error, "code", None) in (408, 429, 500, 502, 503, 504)
+
+    # Do not retry malformed output or schema validation failures.
+    if isinstance(error, (ValueError, ValidationError)):
+        return False
+
+    # Unknown exceptions may be programming/configuration errors.
+    # Fail fast rather than repeatedly issuing requests.
+    return False
 
 
 # ==========================================================
@@ -79,11 +104,10 @@ def generate_ai_analysis(
     analysis_context: dict,
 ) -> AIAnalysis:
     """
-    Send deterministic analytical facts to Gemini
-    and receive a structured business analysis.
+    Generate structured business analysis from deterministic facts.
 
-    Temporary Gemini service failures are retried
-    using exponential backoff.
+    Only classified transient API failures are retried. Invalid
+    responses and non-retryable errors are raised immediately.
     """
 
     client = get_gemini_client()
@@ -130,22 +154,10 @@ Return a concise professional analysis suitable for a
 business analyst or executive dashboard.
 """
 
-    # ------------------------------------------------------
-    # RETRY CONFIGURATION
-    # ------------------------------------------------------
-
-    max_retries = 4
-
-    for attempt in range(max_retries):
-
+    for attempt in range(MAX_RETRIES):
         try:
-
-            # --------------------------------------------------
-            # SEND REQUEST TO GEMINI
-            # --------------------------------------------------
-
             interaction = client.interactions.create(
-                model="gemini-3.5-flash-lite",
+                model=MODEL_NAME,
                 input=prompt,
                 response_format={
                     "type": "text",
@@ -155,51 +167,36 @@ business analyst or executive dashboard.
                 stream=False,
             )
 
-            # --------------------------------------------------
-            # VALIDATE RESPONSE
-            # --------------------------------------------------
-
-            output_text = getattr(
-                interaction,
-                "output_text",
-                None,
-            )
+            output_text = getattr(interaction, "output_text", None)
 
             if not output_text:
-                raise ValueError(
-                    "Gemini returned no output."
-                )
+                raise ValueError("Gemini returned no output.")
 
-            return AIAnalysis.model_validate_json(
-                output_text
-            )
-
-        # ------------------------------------------------------
-        # TEMPORARY FAILURE
-        # ------------------------------------------------------
+            return AIAnalysis.model_validate_json(output_text)
 
         except Exception as error:
+            is_final_attempt = attempt == MAX_RETRIES - 1
 
-            # If this was the final attempt,
-            # allow the original error to reach the caller.
-            if attempt == max_retries - 1:
-                raise error
+            if is_final_attempt or not _is_retryable_error(error):
+                logger.error(
+                    "Gemini analysis failed on attempt %s/%s.",
+                    attempt + 1,
+                    MAX_RETRIES,
+                    exc_info=True,
+                )
+                raise
 
-            # Exponential backoff:
-            #
-            # attempt 0 → 1 second
-            # attempt 1 → 2 seconds
-            # attempt 2 → 4 seconds
-            #
             delay = 2 ** attempt
 
-            print(
-                f"Gemini request failed. "
-                f"Retrying in {delay} seconds..."
+            logger.warning(
+                "Transient Gemini failure on attempt %s/%s. "
+                "Retrying in %s seconds.",
+                attempt + 1,
+                MAX_RETRIES,
+                delay,
+                exc_info=True,
             )
 
             time.sleep(delay)
 
-    raise RuntimeError(
-        "Gemini request failed after all retry attempts."
-    )
+    raise RuntimeError("Gemini request failed after all retry attempts.")

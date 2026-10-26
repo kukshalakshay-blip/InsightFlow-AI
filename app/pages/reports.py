@@ -20,6 +20,15 @@ from app.services.chart_export_service import (
     generate_chart_images,
 )
 
+from app.services.dataset_signature import (
+    generate_dataset_signature,
+)
+
+from app.services.session_state import (
+    reset_stale_ai_analysis,
+    reset_stale_pdf_report,
+)
+
 
 # ==========================================================
 # PAGE HEADER
@@ -58,6 +67,8 @@ if "dataset" not in st.session_state:
         "generated_pdf_name",
         None,
     )
+    st.session_state.pop("generated_pdf_shape", None)
+    st.session_state.pop("generated_pdf_signature", None)
 
     st.info(
         "Upload a dataset before generating a report."
@@ -81,43 +92,28 @@ dataset_name = st.session_state.get(
 
 
 # ==========================================================
-# INVALIDATE STALE REPORTS
+# INVALIDATE STALE CACHED RESULTS
 # ==========================================================
 
-# A report generated for a previous dataset must not be
-# offered as the report for the current dataset.
-
-report_dataset_name = st.session_state.get(
-    "generated_pdf_name"
+# Content signatures detect changes even when the filename and shape
+# remain identical. Reuse the same signature for AI and PDF validity.
+current_dataset_signature = generate_dataset_signature(
+    df,
+    dataset_name,
 )
 
-report_dataset_shape = st.session_state.get(
-    "generated_pdf_shape"
+reset_stale_ai_analysis(
+    st.session_state,
+    current_dataset_signature,
+)
+reset_stale_pdf_report(
+    st.session_state,
+    current_dataset_signature,
 )
 
 current_dataset_shape = (
     int(df.shape[0]),
     int(df.shape[1]),
-)
-
-if (
-    report_dataset_name != dataset_name
-    or report_dataset_shape != current_dataset_shape
-):
-
-    st.session_state.pop(
-        "generated_pdf_report",
-        None,
-    )
-
-    st.session_state.pop(
-        "generated_pdf_name",
-        None,
-    )
-
-    st.session_state.pop(
-        "generated_pdf_shape",
-        None,
 )
 
 
@@ -217,9 +213,14 @@ for index, recommendation in enumerate(
 # GET CACHED AI ANALYSIS
 # ==========================================================
 
-ai_analysis = st.session_state.get(
-    "ai_analysis"
-)
+ai_analysis = st.session_state.get("ai_analysis")
+
+# Defensive check: only include AI results tied to this exact dataset.
+if (
+    st.session_state.get("ai_analysis_signature")
+    != current_dataset_signature
+):
+    ai_analysis = None
 
 
 # ==========================================================
@@ -294,6 +295,7 @@ if st.button(
         "generated_pdf_shape",
         None,
     )
+    st.session_state.pop("generated_pdf_signature", None)
 
     try:
 
@@ -409,6 +411,9 @@ if st.button(
             int(df.shape[0]),
             int(df.shape[1]),
         )
+        st.session_state["generated_pdf_signature"] = (
+            current_dataset_signature
+        )
 
         st.success(
             "Your PDF report has been generated successfully!"
@@ -438,6 +443,9 @@ pdf_dataset_name = st.session_state.get(
 pdf_dataset_shape = st.session_state.get(
     "generated_pdf_shape"
 )
+pdf_dataset_signature = st.session_state.get(
+    "generated_pdf_signature"
+)
 
 current_dataset_shape = (
     int(df.shape[0]),
@@ -449,6 +457,7 @@ if (
     pdf_bytes is not None
     and pdf_dataset_name == dataset_name
     and pdf_dataset_shape == current_dataset_shape
+    and pdf_dataset_signature == current_dataset_signature
 ):
 
     # Create a filesystem-safe download filename.
