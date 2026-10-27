@@ -159,6 +159,41 @@ def test_time_frequency_ignores_invalid_dates():
 
     assert choose_time_frequency(df, "date") == "D"
 
+def test_frequency_uses_date_span_not_unique_date_count():
+    dates = pd.to_datetime([
+        "2024-01-01",
+        "2024-06-01",
+        "2025-01-01",
+    ])
+
+    df = pd.DataFrame({"date": dates})
+
+    assert choose_time_frequency(df, "date") == "ME"
+
+
+def test_frequency_ignores_missing_dates_when_calculating_span():
+    df = pd.DataFrame({
+        "date": [
+            "2025-01-01",
+            "2025-01-15",
+            None,
+            "not-a-date",
+        ]
+    })
+
+    assert choose_time_frequency(df, "date") == "D"
+
+
+def test_frequency_handles_dates_spanning_one_year():
+    df = pd.DataFrame({
+        "date": [
+            "2025-01-01",
+            "2025-06-01",
+            "2025-12-31",
+        ]
+    })
+
+    assert choose_time_frequency(df, "date") == "W"
 
 # =========================================================
 # 4. Selecting diverse recommendations

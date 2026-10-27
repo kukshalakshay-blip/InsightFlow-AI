@@ -131,12 +131,14 @@ def choose_time_frequency(
     date_column: str,
 ) -> str:
     """
-    Choose an appropriate frequency for time-series charts.
+    Choose a time-series frequency based on the observed date range.
 
     Rules:
-    - Up to 90 unique dates: Daily.
-    - 91 to 365 unique dates: Weekly.
-    - More than 365 unique dates: Month-end.
+    - Date span of 90 days or less: Daily.
+    - Date span of 91 to 365 days: Weekly.
+    - Date span greater than 365 days: Month-end.
+
+    Invalid dates are ignored.
 
     Returns pandas frequency aliases:
     D  = Daily
@@ -144,23 +146,26 @@ def choose_time_frequency(
     ME = Month-end
     """
 
-    unique_dates = (
-        pd.to_datetime(
-            df[date_column],
-            errors="coerce",
-        )
-        .dropna()
-        .nunique()
-    )
+    valid_dates = pd.to_datetime(
+        df[date_column],
+        errors="coerce",
+    ).dropna()
 
-    if unique_dates <= 90:
+    if valid_dates.empty:
         return "D"
 
-    if unique_dates <= 365:
+    earliest_date = valid_dates.min().normalize()
+    latest_date = valid_dates.max().normalize()
+
+    date_span_days = (latest_date - earliest_date).days + 1
+
+    if date_span_days <= 90:
+        return "D"
+
+    if date_span_days <= 365:
         return "W"
 
     return "ME"
-
 
 # =========================================================
 # 5. Recommending Visualizations
