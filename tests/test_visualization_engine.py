@@ -369,3 +369,23 @@ def test_recommendations_are_sorted_by_score():
     ]
 
     assert scores == sorted(scores, reverse=True)
+
+def test_count_column_can_be_used_for_categorical_bar_chart():
+    df = pd.DataFrame({
+        "Region": ["North", "South", "East", "West"],
+        "Quantity": [10, 20, 15, 25],
+    })
+
+    recommendations = recommend_visualizations(df)
+
+    bar_charts = [
+        recommendation
+        for recommendation in recommendations
+        if recommendation["type"] == "bar"
+    ]
+
+    assert any(
+        chart.get("x") == "Region"
+        and chart.get("y") == "Quantity"
+        for chart in bar_charts
+    )

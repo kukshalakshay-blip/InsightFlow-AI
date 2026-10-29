@@ -1,4 +1,6 @@
-# Development dependencies for InsightFlow-AI
+# Install application dependencies and development tools.
+-r requirements.txt
+
 black
 ruff
 isort

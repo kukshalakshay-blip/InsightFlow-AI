@@ -216,6 +216,15 @@ def recommend_visualizations(
         if item["semantic_type"] == "numeric_measure"
     ]
 
+    # Use count columns as fallback measures when no
+    # ordinary numeric measures are available.
+    if not measure_columns:
+        measure_columns = [
+            item["column"]
+            for item in column_information
+            if item["semantic_type"] == "count"
+        ]
+
     categorical_columns = [
         item["column"]
         for item in column_information

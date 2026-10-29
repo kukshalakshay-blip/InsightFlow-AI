@@ -16,3 +16,8 @@ data/processed/
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+.env.*
+!.env.example
+.pytest_cache/
+htmlcov/
+.coverage

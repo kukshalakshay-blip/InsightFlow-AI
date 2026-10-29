@@ -1,23 +1,20 @@
 import pandas as pd
 
 
-def looks_like_datetime(series: pd.Series) -> bool:
-    """
-    Determine whether a column contains datetime-like values.
+# =========================================================
+# 1. Datetime detection
+# =========================================================
 
-    Numeric and boolean columns are excluded because numbers
-    can sometimes be incorrectly interpreted as timestamps.
-    """
+def looks_like_datetime(series: pd.Series) -> bool:
+    """Determine whether a column contains datetime-like values."""
 
     if series.empty:
         return False
 
-    # Numeric columns should not be treated as dates.
-    if pd.api.types.is_numeric_dtype(series):
-        return False
-
-    # Boolean columns should not be treated as dates.
-    if pd.api.types.is_bool_dtype(series):
+    if (
+        pd.api.types.is_numeric_dtype(series)
+        or pd.api.types.is_bool_dtype(series)
+    ):
         return False
 
     converted = pd.to_datetime(
@@ -26,15 +23,15 @@ def looks_like_datetime(series: pd.Series) -> bool:
         format="mixed",
     )
 
-    valid_ratio = converted.notna().mean()
+    return bool(converted.notna().mean() >= 0.80)
 
-    return valid_ratio >= 0.80
 
+# =========================================================
+# 2. Year detection
+# =========================================================
 
 def looks_like_year(series: pd.Series) -> bool:
-    """
-    Determine whether a numerical column represents years.
-    """
+    """Determine whether a numerical column represents years."""
 
     if series.empty:
         return False
@@ -47,30 +44,29 @@ def looks_like_year(series: pd.Series) -> bool:
     if numeric_series.empty:
         return False
 
-    valid_years = numeric_series.between(
-        1900,
-        2100,
+    return bool(
+        numeric_series.between(1900, 2100).mean() >= 0.90
     )
 
-    return valid_years.mean() >= 0.90
 
+# =========================================================
+# 3. Month and quarter detection
+# =========================================================
 
 def looks_like_month(
     column_name: str,
     series: pd.Series,
 ) -> bool:
-    """
-    Determine whether a column represents calendar months.
-    """
+    """Identify numerical calendar-month columns."""
 
     name = column_name.lower().strip()
 
     month_keywords = {
-    "month",
-    "order_month",
-    "month_number",
-    "month_num",
-}
+        "month",
+        "order_month",
+        "month_number",
+        "month_num",
+    }
 
     if name not in month_keywords:
         return False
@@ -83,9 +79,8 @@ def looks_like_month(
     if numeric_series.empty:
         return False
 
-    return (
-        numeric_series.between(1, 12).mean()
-        >= 0.90
+    return bool(
+        numeric_series.between(1, 12).mean() >= 0.90
     )
 
 
@@ -93,9 +88,7 @@ def looks_like_quarter(
     column_name: str,
     series: pd.Series,
 ) -> bool:
-    """
-    Determine whether a column represents calendar quarters.
-    """
+    """Identify numerical calendar-quarter columns."""
 
     name = column_name.lower().strip()
 
@@ -116,19 +109,20 @@ def looks_like_quarter(
     if numeric_series.empty:
         return False
 
-    return (
-        numeric_series.between(1, 4).mean()
-        >= 0.90
+    return bool(
+        numeric_series.between(1, 4).mean() >= 0.90
     )
 
+
+# =========================================================
+# 4. Identifier detection
+# =========================================================
 
 def looks_like_identifier(
     column_name: str,
     series: pd.Series,
 ) -> bool:
-    """
-    Determine whether a column is likely an identifier.
-    """
+    """Determine whether a column is likely an identifier."""
 
     name = column_name.lower().strip()
 
@@ -156,13 +150,15 @@ def looks_like_identifier(
     return False
 
 
+# =========================================================
+# 5. Geographic-code detection
+# =========================================================
+
 def looks_like_geographic_code(
     column_name: str,
     series: pd.Series,
 ) -> bool:
-    """
-    Determine whether a column represents a geographic code.
-    """
+    """Identify columns containing postal or ZIP codes."""
 
     name = column_name.lower().strip()
 
@@ -178,15 +174,109 @@ def looks_like_geographic_code(
     return name in geographic_keywords
 
 
+# =========================================================
+# 6. Latitude and longitude detection
+# =========================================================
+
+def _coordinate_values_are_valid(
+    series: pd.Series,
+    minimum: float,
+    maximum: float,
+) -> bool:
+    """Validate numeric coordinates while allowing missing values."""
+
+    if series.empty:
+        return False
+
+    numeric_series = pd.to_numeric(
+        series,
+        errors="coerce",
+    )
+
+    # Non-missing source values must be numeric.
+    invalid_values = series.notna() & numeric_series.isna()
+
+    if invalid_values.any():
+        return False
+
+    valid_values = numeric_series.dropna()
+
+    if valid_values.empty:
+        return False
+
+    return bool(
+        valid_values.between(minimum, maximum).all()
+    )
+
+
+def looks_like_latitude(
+    column_name: str,
+    series: pd.Series,
+) -> bool:
+    """Identify latitude columns with valid geographic ranges."""
+
+    name = column_name.lower().strip()
+
+    latitude_names = {
+        "latitude",
+        "lat",
+        "geo_latitude",
+        "geo_lat",
+        "y_latitude",
+    }
+
+    if name not in latitude_names:
+        return False
+
+    return _coordinate_values_are_valid(
+        series,
+        minimum=-90,
+        maximum=90,
+    )
+
+
+def looks_like_longitude(
+    column_name: str,
+    series: pd.Series,
+) -> bool:
+    """Identify longitude columns with valid geographic ranges."""
+
+    name = column_name.lower().strip()
+
+    longitude_names = {
+        "longitude",
+        "lon",
+        "lng",
+        "geo_longitude",
+        "geo_lon",
+        "y_longitude",
+    }
+
+    if name not in longitude_names:
+        return False
+
+    return _coordinate_values_are_valid(
+        series,
+        minimum=-180,
+        maximum=180,
+    )
+
+
+# =========================================================
+# 7. Count detection
+# =========================================================
+
 def looks_like_count(
     column_name: str,
     series: pd.Series,
 ) -> bool:
-    """
-    Determine whether a numerical column represents a count.
-    """
+    """Determine whether a numerical column represents a count."""
 
-    name = column_name.lower()
+    name = column_name.lower().strip()
+
+    # Entity numbers are not necessarily counts.
+    if name.endswith("_number"):
+        return False
 
     count_keywords = {
         "count",
@@ -203,12 +293,11 @@ def looks_like_count(
         "cars",
     }
 
-    keyword_match = any(
-        keyword in name
-        for keyword in count_keywords
+    name_tokens = set(
+        name.replace("-", "_").split("_")
     )
 
-    if not keyword_match:
+    if not name_tokens.intersection(count_keywords):
         return False
 
     numeric_series = pd.to_numeric(
@@ -225,199 +314,124 @@ def looks_like_count(
     )
 
 
-def is_constant(series: pd.Series) -> bool:
-    """
-    Determine whether a column contains only one
-    unique value.
-    """
+# =========================================================
+# 8. General column characteristics
+# =========================================================
 
-    return series.nunique(
-        dropna=True
-    ) <= 1
+def is_constant(series: pd.Series) -> bool:
+    """Determine whether a column has at most one non-missing value."""
+
+    return series.nunique(dropna=True) <= 1
 
 
 def is_binary_category(series: pd.Series) -> bool:
-    """
-    Determine whether a column contains exactly
-    two unique values.
-    """
+    """Determine whether a column contains exactly two unique values."""
 
-    return series.nunique(
-        dropna=True
-    ) == 2
+    return series.nunique(dropna=True) == 2
 
 
-def is_high_cardinality(
-    series: pd.Series,
-) -> bool:
-    """
-    Determine whether a categorical column contains
-    many unique values relative to the dataset size.
-    """
+def is_high_cardinality(series: pd.Series) -> bool:
+    """Identify columns with many unique values relative to row count."""
 
-    unique_count = series.nunique(
-        dropna=True
-    )
-
+    unique_count = series.nunique(dropna=True)
     row_count = len(series)
 
     if row_count == 0:
         return False
 
-    threshold = max(
-        50,
-        row_count * 0.05,
-    )
+    threshold = max(50, row_count * 0.05)
 
     return unique_count > threshold
 
+
+# =========================================================
+# 9. Semantic column classification
+# =========================================================
 
 def classify_column(
     column_name: str,
     series: pd.Series,
 ) -> str:
-    """
-    Classify a column according to its semantic role.
-    """
+    """Classify a column according to its semantic role."""
 
-    # ----------------------------------------------
     # 1. Constant columns
-    # ----------------------------------------------
-
     if is_constant(series):
         return "constant"
 
-    # ----------------------------------------------
-    # 2. Geographic codes
-    # ----------------------------------------------
+    # 2. Geographic coordinate columns
+    if looks_like_latitude(column_name, series):
+        return "geographic_latitude"
 
-    if looks_like_geographic_code(
-        column_name,
-        series,
-    ):
+    if looks_like_longitude(column_name, series):
+        return "geographic_longitude"
+
+    # 3. Geographic codes
+    if looks_like_geographic_code(column_name, series):
         return "geographic_code"
 
-    # ----------------------------------------------
-    # 3. Identifiers
-    # ----------------------------------------------
-
-    if looks_like_identifier(
-        column_name,
-        series,
-    ):
+    # 4. Identifiers
+    if looks_like_identifier(column_name, series):
         return "identifier"
 
-    # ----------------------------------------------
-    # 4. Boolean columns
-    # ----------------------------------------------
-
+    # 5. Boolean columns
     if pd.api.types.is_bool_dtype(series):
         return "binary_category"
 
-    # ----------------------------------------------
-    # 5. Binary categorical columns
-    # ----------------------------------------------
-
+    # 6. Binary categorical columns
     if is_binary_category(series):
-
         if not pd.api.types.is_numeric_dtype(series):
             return "binary_category"
 
-    # ----------------------------------------------
-    # 6. Datetime columns
-    # ----------------------------------------------
-
+    # 7. Datetime columns
     if looks_like_datetime(series):
         return "datetime"
 
-    # ----------------------------------------------
-    # 7. Year columns
-    # ----------------------------------------------
-
+    # 8. Year columns
     if looks_like_year(series):
         return "year"
 
-    # ----------------------------------------------
-    # 8. Month columns
-    # ----------------------------------------------
-
-    if looks_like_month(
-        column_name,
-        series,
-    ):
+    # 9. Month columns
+    if looks_like_month(column_name, series):
         return "temporal_component"
 
-    # ----------------------------------------------
-    # 9. Quarter columns
-    # ----------------------------------------------
-
-    if looks_like_quarter(
-        column_name,
-        series,
-    ):
+    # 10. Quarter columns
+    if looks_like_quarter(column_name, series):
         return "temporal_component"
 
-    # ----------------------------------------------
-    # 10. Numeric counts
-    # ----------------------------------------------
-
-    if looks_like_count(
-        column_name,
-        series,
-    ):
+    # 11. Numeric counts
+    if looks_like_count(column_name, series):
         return "count"
 
-    # ----------------------------------------------
-    # 11. Numeric measurements
-    # ----------------------------------------------
-
+    # 12. Numeric measurements
     if pd.api.types.is_numeric_dtype(series):
         return "numeric_measure"
 
-    # ----------------------------------------------
-    # 12. String / categorical columns
-    # ----------------------------------------------
-
-    if pd.api.types.is_string_dtype(series):
-
-        if is_high_cardinality(series):
-            return "high_cardinality_categorical"
-
-        return "categorical"
-
-    # ----------------------------------------------
-    # 13. Pandas categorical dtype
-    # ----------------------------------------------
-
-    if isinstance(
-        series.dtype,
-        pd.CategoricalDtype,
+    # 13. String and categorical columns
+    if (
+        pd.api.types.is_string_dtype(series)
+        or isinstance(series.dtype, pd.CategoricalDtype)
+        or pd.api.types.is_object_dtype(series)
     ):
-
         if is_high_cardinality(series):
             return "high_cardinality_categorical"
 
         return "categorical"
-
-    # ----------------------------------------------
-    # 14. Unknown
-    # ----------------------------------------------
 
     return "unknown"
 
 
+# =========================================================
+# 10. Analyze a complete dataset
+# =========================================================
+
 def analyze_columns(
     df: pd.DataFrame,
 ) -> list[dict]:
-    """
-    Analyze every column in a dataset and return
-    semantic information about each column.
-    """
+    """Return semantic information for every dataset column."""
 
     results = []
 
     for column in df.columns:
-
         series = df[column]
 
         results.append(
@@ -429,9 +443,7 @@ def analyze_columns(
                     series,
                 ),
                 "unique_count": int(
-                    series.nunique(
-                        dropna=True
-                    )
+                    series.nunique(dropna=True)
                 ),
                 "missing_percentage": float(
                     series.isna().mean() * 100

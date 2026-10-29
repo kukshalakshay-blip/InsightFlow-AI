@@ -11,6 +11,8 @@ from app.services.column_intelligence import (
     looks_like_datetime,
     looks_like_geographic_code,
     looks_like_identifier,
+    looks_like_latitude,
+    looks_like_longitude,
     looks_like_month,
     looks_like_quarter,
     looks_like_year,
@@ -173,7 +175,80 @@ def test_ordinary_column_is_not_geographic_code():
 
 
 # =========================================================
-# 6. Count detection
+# 6. Latitude and longitude detection
+# =========================================================
+
+@pytest.mark.parametrize(
+    "column_name",
+    [
+        "latitude",
+        "Latitude",
+        "LAT",
+        "lat",
+        "geo_latitude",
+    ],
+)
+def test_detects_latitude_names(column_name):
+    series = pd.Series([28.61, 28.62, 28.63])
+
+    assert looks_like_latitude(column_name, series) is True
+
+
+@pytest.mark.parametrize(
+    "column_name",
+    [
+        "longitude",
+        "Longitude",
+        "LON",
+        "lon",
+        "lng",
+        "geo_longitude",
+    ],
+)
+def test_detects_longitude_names(column_name):
+    series = pd.Series([77.20, 77.21, 77.22])
+
+    assert looks_like_longitude(column_name, series) is True
+
+
+def test_latitude_rejects_values_outside_valid_range():
+    series = pd.Series([28.61, 95.0, 28.63])
+
+    assert looks_like_latitude("latitude", series) is False
+
+
+def test_longitude_rejects_values_outside_valid_range():
+    series = pd.Series([77.20, 181.0, 77.22])
+
+    assert looks_like_longitude("longitude", series) is False
+
+
+def test_latitude_rejects_non_numeric_values():
+    series = pd.Series(["north", "south", "east"])
+
+    assert looks_like_latitude("latitude", series) is False
+
+
+def test_longitude_rejects_non_numeric_values():
+    series = pd.Series(["east", "west", "north"])
+
+    assert looks_like_longitude("longitude", series) is False
+
+
+def test_latitude_rejects_unrelated_column_name():
+    series = pd.Series([28.61, 28.62, 28.63])
+
+    assert looks_like_latitude("sales", series) is False
+
+
+def test_longitude_rejects_unrelated_column_name():
+    series = pd.Series([77.20, 77.21, 77.22])
+
+    assert looks_like_longitude("sales", series) is False
+
+
+# =========================================================
+# 7. Count detection
 # =========================================================
 
 @pytest.mark.parametrize(
@@ -213,8 +288,14 @@ def test_count_detection_rejects_non_count_column_names():
     assert looks_like_count("sales", series) is False
 
 
+def test_count_detection_rejects_account_number():
+    series = pd.Series([1021, 1022, 1023])
+
+    assert looks_like_count("account_number", series) is False
+
+
 # =========================================================
-# 7. General column characteristics
+# 8. General column characteristics
 # =========================================================
 
 def test_detects_constant_column():
@@ -254,15 +335,23 @@ def test_empty_series_is_not_high_cardinality():
 
 
 # =========================================================
-# 8. Semantic classification
+# 9. Semantic classification
 # =========================================================
 
 @pytest.mark.parametrize(
     ("column_name", "values", "expected"),
     [
         ("Order_ID", [101, 102, 103], "identifier"),
-        ("Postal_Code", ["248001", "248002", "248003"], "geographic_code"),
-        ("Order_Date", ["2025-01-15", "2025-02-15", "2025-03-15"], "datetime"),
+        (
+            "Postal_Code",
+            ["248001", "248002", "248003"],
+            "geographic_code",
+        ),
+        (
+            "Order_Date",
+            ["2025-01-15", "2025-02-15", "2025-03-15"],
+            "datetime",
+        ),
         ("Year", [2020, 2021, 2022], "year"),
         ("Month", [1, 2, 3], "temporal_component"),
         ("Quarter", [1, 2, 3], "temporal_component"),
@@ -270,6 +359,16 @@ def test_empty_series_is_not_high_cardinality():
         ("Sales", [100.5, 200.5, 300.5], "numeric_measure"),
         ("Region", ["North", "South", "West"], "categorical"),
         ("Status", ["Open", "Closed", "Open"], "binary_category"),
+        (
+            "Latitude",
+            [28.61, 28.62, 28.63],
+            "geographic_latitude",
+        ),
+        (
+            "Longitude",
+            [77.20, 77.21, 77.22],
+            "geographic_longitude",
+        ),
     ],
 )
 def test_classifies_columns_correctly(column_name, values, expected):
@@ -291,7 +390,7 @@ def test_boolean_column_is_binary_category():
 
 
 # =========================================================
-# 9. Full dataset analysis
+# 10. Full dataset analysis
 # =========================================================
 
 def test_analyze_columns_returns_expected_information():
@@ -327,6 +426,23 @@ def test_analyze_columns_reports_missing_percentage():
     results = analyze_columns(df)
 
     assert results[0]["missing_percentage"] == pytest.approx(25.0)
+
+
+def test_analyze_columns_reports_geographic_coordinates():
+    df = pd.DataFrame({
+        "Latitude": [28.61, 28.62, 28.63],
+        "Longitude": [77.20, 77.21, 77.22],
+        "Sales": [100, 200, 300],
+    })
+
+    results = {
+        item["column"]: item
+        for item in analyze_columns(df)
+    }
+
+    assert results["Latitude"]["semantic_type"] == "geographic_latitude"
+    assert results["Longitude"]["semantic_type"] == "geographic_longitude"
+    assert results["Sales"]["semantic_type"] == "numeric_measure"
 
 
 def test_analyze_empty_dataframe():
