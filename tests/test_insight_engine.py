@@ -538,3 +538,59 @@ def test_build_analysis_context_handles_empty_dataframe():
     assert context["metrics"] == {}
     assert context["deterministic_findings"] == []
     assert context["recommendations"] == []
+
+# ==========================================================
+# INSIGHT ENGINE 2.0 REGRESSION TESTS
+# ==========================================================
+
+def test_line_insight_handles_missing_resampled_periods():
+    df = pd.DataFrame({
+        "date": ["2026-01-01", "2026-01-02", "2026-01-04"],
+        "sales": [100.0, 150.0, 250.0],
+    })
+    result = generate_insight(
+        df,
+        {"type": "line", "x": "date", "y": "sales", "frequency": "D"},
+    )
+    assert "linear fit" in result
+    assert "nan" not in result.lower()
+
+
+def test_map_insight_excludes_out_of_range_coordinates():
+    df = pd.DataFrame({
+        "latitude": [10.0, 95.0, 20.0, np.inf],
+        "longitude": [70.0, 75.0, 200.0, 80.0],
+    })
+    result = generate_insight(
+        df,
+        {"type": "map", "latitude": "latitude", "longitude": "longitude"},
+    )
+    assert "1 geographic records" in result
+
+
+def test_metric_bar_ignores_infinite_and_non_numeric_values():
+    df = pd.DataFrame({
+        "region": ["North", "North", "South", "South"],
+        "sales": [100.0, np.inf, "200", "bad"],
+    })
+    result = generate_insight(
+        df,
+        {"type": "bar", "column": "region", "value_column": "sales"},
+    )
+    assert "South" in result
+    assert "200.00" in result
+
+
+def test_context_includes_extended_finite_statistics():
+    df = pd.DataFrame({"sales": [1.0, 2.0, 3.0, np.inf]})
+    context = build_analysis_context(df, [])
+    metrics = context["metrics"]["sales"]
+    assert metrics["valid_count"] == 3
+    assert metrics["q1"] == pytest.approx(1.5)
+    assert metrics["q3"] == pytest.approx(2.5)
+    assert metrics["std"] == pytest.approx(1.0)
+
+
+def test_unknown_recommendation_type_is_handled():
+    result = generate_insight(pd.DataFrame(), {})
+    assert "unknown" in result

@@ -1,11 +1,18 @@
 import numpy as np
 import pandas as pd
+from typing import cast
 
 from app.services.analysis_engine import (
     analyze_correlation,
     analyze_distribution,
     analyze_trend,
 )
+
+def _finite_numeric(series: pd.Series) -> pd.Series:
+    """Return finite numeric observations while preserving row indexes."""
+    values = pd.to_numeric(series, errors="coerce")
+    return values.replace([np.inf, -np.inf], np.nan).dropna()
+
 
 def build_analysis_context(
     df: pd.DataFrame,
@@ -43,11 +50,7 @@ def build_analysis_context(
     ).columns
 
     for column in numeric_columns:
-        series = df[column].dropna()
-
-        series = series[
-            np.isfinite(series)
-        ]
+        series = _finite_numeric(df[column])
 
         if series.empty:
             continue
@@ -58,6 +61,15 @@ def build_analysis_context(
             "min": float(series.min()),
             "max": float(series.max()),
             "total": float(series.sum()),
+            "std": float(series.std()) if len(series) > 1 else None,
+            "q1": float(series.quantile(0.25)),
+            "q3": float(series.quantile(0.75)),
+            "skewness": (
+                float(cast(float, series.skew()))
+                if len(series) >= 3 and pd.notna(series.skew())
+                else None
+            ),
+            "valid_count": int(len(series)),
         }
 
     # ======================================================
@@ -107,7 +119,7 @@ def generate_insight(
     for a visualization recommendation.
     """
 
-    chart_type = recommendation["type"]
+    chart_type = recommendation.get("type", "unknown")
 
     # ==================================================
     # 1. SCATTER PLOT
@@ -122,6 +134,7 @@ def generate_insight(
             df,
             x_column,
             y_column,
+            method=recommendation.get("method", "pearson"),
         )
 
         if correlation is None:
@@ -178,9 +191,7 @@ def generate_insight(
 
         mean = distribution["mean"]
         median = distribution["median"]
-        difference_percentage = distribution[
-            "difference_percentage"
-        ]
+        skewness = distribution.get("skewness")
 
         if mean is None or median is None:
             return (
@@ -188,41 +199,25 @@ def generate_insight(
                 f"for {column}."
             )
 
-        if difference_percentage is None:
-            return (
-                f"The distribution of {column} has a "
-                f"mean of {mean:,.2f} and a median of "
-                f"{median:,.2f}."
-            )
-
-        if difference_percentage >= 20:
-            distribution_note = (
-                "The substantial difference between the "
-                "mean and median suggests that the "
-                "distribution may be skewed."
-            )
-
-        elif difference_percentage >= 10:
-            distribution_note = (
-                "The mean and median differ noticeably, "
-                "indicating some asymmetry in the "
-                "distribution."
-            )
-
+        if skewness is None:
+            distribution_note = "Skewness could not be determined."
+        elif skewness >= 1:
+            distribution_note = "The values may be skewed to the right, showing substantial right skew."
+        elif skewness >= 0.5:
+            distribution_note = "The values may be skewed to the right, showing moderate right skew."
+        elif skewness <= -1:
+            distribution_note = "The values may be skewed to the left, showing substantial left skew."
+        elif skewness <= -0.5:
+            distribution_note = "The values may be skewed to the left, showing moderate left skew."
         else:
-            distribution_note = (
-                "The mean and median are relatively close, "
-                "suggesting a more balanced distribution."
-            )
+            distribution_note = "The mean and median are relatively close, indicating relatively low skewness."
 
         return (
             f"The distribution of {column} has a mean of "
-            f"{mean:,.2f} and a median of "
-            f"{median:,.2f}. "
+            f"{mean:,.2f} and a median of {median:,.2f}. "
             f"{distribution_note}"
         )
 
-    # ==================================================
     # 3. BAR CHART
     # ==================================================
 
@@ -240,12 +235,28 @@ def generate_insight(
 
         if value_column is not None:
 
-            grouped_data = (
-                df.groupby(column)[value_column]
-                .sum()
-                .sort_values(
-                    ascending=False
+            if value_column not in df.columns or column not in df.columns:
+                return (
+                    f"No valid values were available to compare "
+                    f"{value_column} across {column}."
                 )
+
+            metric_data = df[[column, value_column]].copy()
+            metric_data[value_column] = pd.to_numeric(
+                metric_data[value_column], errors="coerce"
+            )
+            metric_data[value_column] = metric_data[value_column].replace(
+                [np.inf, -np.inf], np.nan
+            )
+            metric_data = metric_data.dropna(
+                subset=[column, value_column]
+            )
+
+            grouped_data = (
+                metric_data.groupby(column)[value_column]
+                .sum(min_count=1)
+                .dropna()
+                .sort_values(ascending=False)
             )
 
             if grouped_data.empty:
@@ -361,10 +372,22 @@ def generate_insight(
                 f"analyze the trend of {y_column}."
             )
 
-        values = chart_data[y_column].astype(float).to_numpy()
+        values = pd.to_numeric(
+            chart_data[y_column], errors="coerce"
+        ).to_numpy(dtype=float)
 
-        first_value = values[0]
-        last_value = values[-1]
+        valid_mask = np.isfinite(values)
+        valid_values = values[valid_mask]
+        valid_periods = np.arange(len(values), dtype=float)[valid_mask]
+
+        if len(valid_values) < 2:
+            return (
+                f"Not enough valid time points are available to "
+                f"analyze the trend of {y_column}."
+            )
+
+        first_value = valid_values[0]
+        last_value = valid_values[-1]
 
         # --------------------------------------------------
         # 1. Calculate endpoint change
@@ -399,22 +422,20 @@ def generate_insight(
         # 2. Estimate the overall linear trend
         # --------------------------------------------------
 
-        periods = np.arange(len(values), dtype=float)
-
         slope, intercept = np.polyfit(
-            periods,
-            values,
+            valid_periods,
+            valid_values,
             1,
         )
 
-        fitted_values = intercept + slope * periods
+        fitted_values = intercept + slope * valid_periods
 
         residual_sum_squares = np.sum(
-            (values - fitted_values) ** 2
+            (valid_values - fitted_values) ** 2
         )
 
         total_sum_squares = np.sum(
-            (values - np.mean(values)) ** 2
+            (valid_values - np.mean(valid_values)) ** 2
         )
 
         if total_sum_squares > 0:
@@ -472,11 +493,26 @@ def generate_insight(
         latitude = recommendation["latitude"]
         longitude = recommendation["longitude"]
 
-        geographic_data = df[
-            [latitude, longitude]
-        ].dropna(
-            subset=[latitude, longitude]
+        if latitude not in df.columns or longitude not in df.columns:
+            return (
+                f"No valid geographic coordinates were "
+                f"available using {latitude} and {longitude}."
+            )
+
+        geographic_data = df[[latitude, longitude]].copy()
+        geographic_data[latitude] = pd.to_numeric(
+            geographic_data[latitude], errors="coerce"
         )
+        geographic_data[longitude] = pd.to_numeric(
+            geographic_data[longitude], errors="coerce"
+        )
+        geographic_data = geographic_data.replace(
+            [np.inf, -np.inf], np.nan
+        ).dropna(subset=[latitude, longitude])
+        geographic_data = geographic_data[
+            geographic_data[latitude].between(-90, 90)
+            & geographic_data[longitude].between(-180, 180)
+        ]
 
         if geographic_data.empty:
             return (
