@@ -443,4 +443,56 @@ def test_outlier_percentage_is_calculated_correctly():
 
     assert result["outlier_percentage"] == pytest.approx(
         expected_percentage
-    )        
+    )
+
+def test_analyze_distribution_ignores_infinity():
+    df = pd.DataFrame({
+        "Sales": [100, 200, 300, np.inf]
+    })
+
+    result = analyze_distribution(df, "Sales")
+
+    assert result["mean"] == 200.0
+    assert result["median"] == 200.0
+    assert result["difference_percentage"] == 0.0
+
+
+def test_analyze_distribution_ignores_negative_infinity():
+    df = pd.DataFrame({
+        "Sales": [100, 200, 300, -np.inf]
+    })
+
+    result = analyze_distribution(df, "Sales")
+
+    assert result["mean"] == 200.0
+    assert result["median"] == 200.0
+
+
+def test_analyze_correlation_ignores_infinite_values():
+    df = pd.DataFrame({
+        "Sales": [100, 200, 300, np.inf],
+        "Profit": [10, 20, 30, 40],
+    })
+
+    result = analyze_correlation(
+        df,
+        "Sales",
+        "Profit",
+    )
+
+    assert result == 1.0
+
+
+def test_analyze_correlation_ignores_negative_infinity():
+    df = pd.DataFrame({
+        "Sales": [100, 200, 300, -np.inf],
+        "Profit": [10, 20, 30, 40],
+    })
+
+    result = analyze_correlation(
+        df,
+        "Sales",
+        "Profit",
+    )
+
+    assert result == 1.0       

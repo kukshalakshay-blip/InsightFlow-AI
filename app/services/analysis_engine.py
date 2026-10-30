@@ -1,6 +1,38 @@
 import numpy as np
 import pandas as pd
+from typing import Literal, cast
 
+
+# ============================================================
+# SHARED DATA PREPARATION
+# ============================================================
+
+def _clean_numeric_data(series: pd.Series) -> pd.Series:
+    """
+    Convert a Series into valid finite numerical observations.
+
+    - Converts numeric strings.
+    - Removes missing values.
+    - Removes positive and negative infinity.
+    - Preserves original row indexes.
+    """
+
+    numeric_data = pd.to_numeric(
+        series,
+        errors="coerce",
+    )
+
+    numeric_data = numeric_data.replace(
+        [np.inf, -np.inf],
+        np.nan,
+    )
+
+    return numeric_data.dropna()
+
+
+# ============================================================
+# 1. TREND ANALYSIS
+# ============================================================
 
 def analyze_trend(
     df: pd.DataFrame,
@@ -9,17 +41,15 @@ def analyze_trend(
     frequency: str = "D",
 ) -> pd.DataFrame:
     """
-    Aggregate numeric values over time for trend analysis.
+    Aggregate numerical values over time.
 
-    Converts the x-axis column to datetime, converts the y-axis
-    column to numeric, removes invalid observations, aggregates
-    by the requested frequency, and returns chronological results.
-
-    Daily aggregation is the default. Missing time periods are
-    preserved as NaN so that gaps remain visible in trend charts.
+    Invalid dates and numerical observations are excluded.
+    Missing time periods are preserved as NaN.
     """
 
-    trend_data = df[[x_column, y_column]].copy()
+    trend_data = df[
+        [x_column, y_column]
+    ].copy()
 
     trend_data[x_column] = pd.to_datetime(
         trend_data[x_column],
@@ -32,12 +62,21 @@ def analyze_trend(
         errors="coerce",
     )
 
+    trend_data[y_column] = trend_data[
+        y_column
+    ].replace(
+        [np.inf, -np.inf],
+        np.nan,
+    )
+
     trend_data = trend_data.dropna(
         subset=[x_column, y_column]
     )
 
     if trend_data.empty:
-        return pd.DataFrame(columns=[x_column, y_column])
+        return pd.DataFrame(
+            columns=[x_column, y_column]
+        )
 
     trend_data = (
         trend_data
@@ -51,31 +90,61 @@ def analyze_trend(
     return trend_data
 
 
+# ============================================================
+# 2. CORRELATION ANALYSIS
+# ============================================================
 
 def analyze_correlation(
     df: pd.DataFrame,
     x_column: str,
     y_column: str,
+    method: str = "pearson",
 ) -> float | None:
     """
-    Calculate the Pearson correlation between two numerical
-    columns.
+    Calculate correlation between two numerical columns.
 
-    Return None when either column has insufficient variation
-    or the correlation cannot be calculated.
+    Supported methods:
+    - Pearson: Linear relationships.
+    - Spearman: Monotonic relationships.
+
+    Missing and infinite paired observations are excluded.
     """
 
-    x = df[x_column]
-    y = df[y_column]
+    supported_methods = {
+        "pearson",
+        "spearman",
+    }
 
-    # Correlation is undefined when either column is constant.
-    if x.nunique(dropna=True) < 2:
+    method = method.lower()
+
+    if method not in supported_methods:
+        raise ValueError(
+            f"Unsupported correlation method: {method}. "
+            "Use 'pearson' or 'spearman'."
+        )
+
+    paired_data = pd.DataFrame({
+        x_column: _clean_numeric_data(
+            df[x_column]
+        ),
+        y_column: _clean_numeric_data(
+            df[y_column]
+        ),
+    }).dropna()
+
+    if len(paired_data) < 2:
         return None
 
-    if y.nunique(dropna=True) < 2:
+    x = paired_data[x_column]
+    y = paired_data[y_column]
+
+    if x.nunique() < 2 or y.nunique() < 2:
         return None
 
-    correlation = x.corr(y)
+    correlation = x.corr(
+        y,
+        method=cast(Literal["pearson", "spearman"], method),
+    )
 
     if pd.isna(correlation):
         return None
@@ -83,18 +152,23 @@ def analyze_correlation(
     return float(correlation)
 
 
+# ============================================================
+# 3. DISTRIBUTION ANALYSIS
+# ============================================================
+
 def analyze_distribution(
     df: pd.DataFrame,
     column: str,
 ) -> dict:
     """
-    Analyze the distribution of a numerical column.
+    Calculate descriptive statistics for a numerical column.
 
-    Calculates the mean, median, and percentage difference
-    between them.
+    Existing output keys are preserved for compatibility.
     """
 
-    numeric_data = df[column].dropna()
+    numeric_data = _clean_numeric_data(
+        df[column]
+    )
 
     if numeric_data.empty:
         return {
@@ -121,8 +195,31 @@ def analyze_distribution(
             if difference_percentage is not None
             else None
         ),
+        "std": (
+            float(numeric_data.std())
+            if len(numeric_data) > 1
+            else None
+        ),
+        "variance": (
+            float(numeric_data.var())
+            if len(numeric_data) > 1
+            else None
+        ),
+        "q1": float(numeric_data.quantile(0.25)),
+        "q3": float(numeric_data.quantile(0.75)),
+        "skewness": (
+            float(cast(float, numeric_data.skew()))
+            if len(numeric_data) >= 3
+            and pd.notna(numeric_data.skew())
+            else None
+        ),
+        "valid_count": int(len(numeric_data)),
     }
 
+
+# ============================================================
+# 4. OUTLIER DETECTION
+# ============================================================
 
 def detect_outliers(
     df: pd.DataFrame,
@@ -130,18 +227,10 @@ def detect_outliers(
     multiplier: float = 1.5,
 ) -> dict:
     """
-    Detect potential numerical outliers using the IQR method.
+    Detect potential numerical outliers using IQR.
 
-    Values below Q1 - multiplier * IQR or above
-    Q3 + multiplier * IQR are flagged.
-
-    Missing and non-finite values are excluded.
-
-    The original DataFrame is never modified.
-
-    Returns:
-        A dictionary containing quartiles, boundaries,
-        outlier values, counts, and outlier percentage.
+    Non-finite observations are excluded.
+    Original DataFrame is never modified.
     """
 
     if not np.isfinite(multiplier) or multiplier <= 0:
@@ -156,9 +245,6 @@ def detect_outliers(
 
     series = df[column]
 
-    # An entirely missing column has no values to analyze.
-    # Handle this before checking its dtype because pandas
-    # may infer an object dtype for a column containing only None.
     if series.isna().all():
         return {
             "column": column,
@@ -182,14 +268,12 @@ def detect_outliers(
             "not Boolean or non-numeric values."
         )
 
-    # Convert to numeric values and exclude NaN, infinity,
-    # and negative infinity from statistical calculations.
     numeric_data = series.dropna()
+
     numeric_data = numeric_data[
         np.isfinite(numeric_data)
     ]
 
-    # The column may contain only non-finite values.
     if numeric_data.empty:
         return {
             "column": column,
@@ -212,7 +296,6 @@ def detect_outliers(
     lower_bound = q1 - multiplier * iqr
     upper_bound = q3 + multiplier * iqr
 
-    # Values exactly on either boundary are not outliers.
     outliers = numeric_data[
         (numeric_data < lower_bound)
         | (numeric_data > upper_bound)
@@ -223,8 +306,6 @@ def detect_outliers(
 
     outlier_percentage = (
         outlier_count / valid_count * 100
-        if valid_count > 0
-        else 0.0
     )
 
     return {
@@ -237,5 +318,7 @@ def detect_outliers(
         "outlier_values": outliers.tolist(),
         "outlier_count": outlier_count,
         "valid_count": valid_count,
-        "outlier_percentage": float(outlier_percentage),
+        "outlier_percentage": float(
+            outlier_percentage
+        ),
     }
