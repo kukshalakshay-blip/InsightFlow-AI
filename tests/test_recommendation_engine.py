@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -851,8 +852,6 @@ def test_missing_values_and_negative_profit_are_both_reported():
 # NUMERICAL OUTLIER RECOMMENDATIONS
 # ==========================================================
 
-import numpy as np
-
 
 def test_numerical_outliers_generate_recommendation():
     df = pd.DataFrame({
@@ -961,3 +960,83 @@ def test_numerical_outliers_handle_missing_values():
         item["rule_id"] == "numerical_outliers:sales"
         for item in recommendations
     )
+
+
+# =========================================================
+# 10. Numerical Reliability and Defensive Inputs
+# =========================================================
+
+def test_none_visualization_recommendations_are_supported():
+    df = pd.DataFrame({"sales": [100, None, 300]})
+    recommendations = generate_business_recommendations(df, None)
+    assert isinstance(recommendations, list)
+    assert any(item["rule_id"] == "missing_data" for item in recommendations)
+
+
+def test_non_dictionary_visualization_is_ignored():
+    dates = pd.date_range("2025-01-01", periods=5, freq="D")
+    df = pd.DataFrame({"order_date": dates, "sales": [100, 90, 80, 70, 60]})
+    recommendations = generate_business_recommendations(df, ["not-a-chart", None])
+    assert not any(item["rule_id"].startswith("declining_sales:") for item in recommendations)
+
+
+def test_infinite_profit_values_are_excluded_from_loss_metrics():
+    df = pd.DataFrame({
+        "profit": [-100.0, np.inf, -50.0, -np.inf, 200.0],
+        "region": ["North", "South", "North", "West", "East"],
+    })
+    recommendations = get_recommendations(df)
+    item = get_recommendations_by_rule(recommendations, "negative_profit")[0]
+    assert "2 records have negative profit" in item["finding"]
+    assert "150.00 in total recorded losses" in item["finding"]
+
+
+def test_infinite_margin_values_do_not_create_negative_margin_findings():
+    df = pd.DataFrame({"profit_margin": [np.inf, -np.inf, 0.1, 0.2]})
+    recommendations = get_recommendations(df)
+    assert not any(item["rule_id"].startswith("negative_margin:") for item in recommendations)
+
+
+def test_infinite_values_do_not_pollute_loss_contributor_summaries():
+    df = pd.DataFrame({
+        "profit": [-100.0, -50.0, -np.inf],
+        "region": ["North", "South", "West"],
+    })
+    recommendations = get_recommendations(df)
+    item = get_recommendations_by_rule(recommendations, "negative_profit")[0]
+    assert "North: 100.00 in recorded losses" in item["finding"]
+    assert "West:" not in item["finding"]
+
+
+def test_sales_trend_ignores_infinite_endpoint_values():
+    dates = pd.date_range("2025-01-01", periods=5, freq="D")
+    df = pd.DataFrame({
+        "order_date": dates,
+        "sales": [100.0, 90.0, 80.0, 70.0, np.inf],
+    })
+    charts = [{"type": "line", "x": "order_date", "y": "sales", "frequency": "D"}]
+    recommendations = get_recommendations(df, charts)
+    # The last finite observation is 70, so a material decline is still detected.
+    assert any(item["rule_id"] == "declining_sales:order_date:sales" for item in recommendations)
+
+
+def test_zero_row_dataframe_returns_empty_list():
+    df = pd.DataFrame(columns=["sales", "profit"])
+    assert generate_business_recommendations(df, []) == []
+
+
+def test_non_string_column_labels_do_not_break_recommendation_generation():
+    df = pd.DataFrame({0: [1, 2, 3], "sales": [100, None, 300]})
+    recommendations = get_recommendations(df)
+    assert isinstance(recommendations, list)
+
+
+def test_missing_data_and_duplicate_detection_remain_independent():
+    df = pd.DataFrame({
+        "sales": [100.0, None, 100.0, None],
+        "region": ["North", "South", "North", "South"],
+    })
+    recommendations = get_recommendations(df)
+    rule_ids = {item["rule_id"] for item in recommendations}
+    assert "missing_data" in rule_ids
+    assert "duplicate_rows" in rule_ids

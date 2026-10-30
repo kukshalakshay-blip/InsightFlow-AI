@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from app.services.analysis_engine import (
@@ -5,6 +6,13 @@ from app.services.analysis_engine import (
     analyze_trend,
     detect_outliers,
 )
+
+
+def _finite_numeric_values(series: pd.Series) -> pd.Series:
+    """Return numeric, finite observations while preserving the index."""
+    numeric = pd.to_numeric(series, errors="coerce")
+    finite_mask = np.isfinite(numeric.to_numpy(dtype=float, na_value=np.nan))
+    return numeric.loc[finite_mask]
 
 def summarize_loss_contributors(
     df: pd.DataFrame,
@@ -25,21 +33,23 @@ def summarize_loss_contributors(
     """
 
     if (
-        profit_column not in df.columns
+        not isinstance(df, pd.DataFrame)
+        or profit_column not in df.columns
         or not pd.api.types.is_numeric_dtype(df[profit_column])
         or pd.api.types.is_bool_dtype(df[profit_column])
         or top_n < 1
     ):
         return []
 
-    profit_values = df[profit_column]
+    profit_values = pd.to_numeric(df[profit_column], errors="coerce")
+    profit_array = profit_values.to_numpy(dtype=float, na_value=np.nan)
+    loss_positions = np.flatnonzero(np.isfinite(profit_array) & (profit_array < 0))
 
-    loss_mask = profit_values.notna() & (profit_values < 0)
-
-    if not loss_mask.any():
+    if loss_positions.size == 0:
         return []
 
-    loss_rows = df.loc[loss_mask]
+    loss_rows = df.iloc[loss_positions].copy()
+    loss_rows[profit_column] = profit_array[loss_positions]
 
     details = []
 
@@ -115,6 +125,12 @@ def generate_business_recommendations(
     - action
     - rationale
     """
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+
+    if visualization_recommendations is None:
+        visualization_recommendations = []
 
     recommendations = []
 
@@ -236,7 +252,7 @@ def generate_business_recommendations(
             column
             for column in df.columns
             if (
-                column.lower() == "profit"
+                str(column).lower() == "profit"
                 and pd.api.types.is_numeric_dtype(df[column])
                 and not pd.api.types.is_bool_dtype(df[column])
             )
@@ -248,7 +264,7 @@ def generate_business_recommendations(
 
     if profit_column is not None:
 
-        profit_values = df[profit_column].dropna()
+        profit_values = _finite_numeric_values(df[profit_column])
 
         negative_profit_mask = profit_values < 0
 
@@ -275,27 +291,21 @@ def generate_business_recommendations(
             # negative-value records as the profit column.
             matching_margin_columns = []
 
-            profit_negative_mask = (
-                df[profit_column]
-                .lt(0)
-                .fillna(False)
-                .to_numpy(dtype=bool)
-            )
+            profit_numeric = pd.to_numeric(df[profit_column], errors="coerce")
+            profit_array = profit_numeric.to_numpy(dtype=float, na_value=np.nan)
+            profit_negative_mask = np.isfinite(profit_array) & (profit_array < 0)
 
             for column in df.columns:
                 if (
-                    "margin" not in column.lower()
+                    "margin" not in str(column).lower()
                     or not pd.api.types.is_numeric_dtype(df[column])
                     or pd.api.types.is_bool_dtype(df[column])
                 ):
                     continue
 
-                margin_negative_mask = (
-                    df[column]
-                    .lt(0)
-                    .fillna(False)
-                    .to_numpy(dtype=bool)
-                )
+                margin_numeric = pd.to_numeric(df[column], errors="coerce")
+                margin_array = margin_numeric.to_numpy(dtype=float, na_value=np.nan)
+                margin_negative_mask = np.isfinite(margin_array) & (margin_array < 0)
 
                 if (
                     margin_negative_mask.shape == profit_negative_mask.shape
@@ -313,15 +323,13 @@ def generate_business_recommendations(
                 margin_details = []
 
                 for column in matching_margin_columns:
-                    margin_values = df[column].dropna()
+                    margin_values = _finite_numeric_values(df[column])
 
-                    margin_count = int(
-                        (margin_values < 0).sum()
-                    )
-
+                    margin_count = int((margin_values < 0).sum())
                     margin_percentage = (
-                        margin_count / len(margin_values)
-                    ) * 100
+                        margin_count / len(margin_values) * 100
+                        if not margin_values.empty else 0.0
+                    )
 
                     margin_details.append(
                         f"{column}: {margin_count:,} negative records "
@@ -391,7 +399,7 @@ def generate_business_recommendations(
         column
         for column in df.columns
         if (
-            "margin" in column.lower()
+            "margin" in str(column).lower()
             and pd.api.types.is_numeric_dtype(df[column])
             and not pd.api.types.is_bool_dtype(df[column])
         )
@@ -402,7 +410,7 @@ def generate_business_recommendations(
         if column in consolidated_margin_columns:
             continue
 
-        margin_values = df[column].dropna()
+        margin_values = _finite_numeric_values(df[column])
 
         if margin_values.empty:
             continue
@@ -466,7 +474,7 @@ def generate_business_recommendations(
     discount_columns = [
         column
         for column in numeric_columns
-        if "discount" in column.lower()
+        if "discount" in str(column).lower()
     ]
 
     # Restrict this rule to continuous profitability measures.
@@ -475,8 +483,8 @@ def generate_business_recommendations(
         column
         for column in numeric_columns
         if (
-            column.lower() == "profit"
-            or "profit_margin" in column.lower()
+            str(column).lower() == "profit"
+            or "profit_margin" in str(column).lower()
         )
     ]
 
@@ -536,6 +544,9 @@ def generate_business_recommendations(
 
     for visualization in visualization_recommendations:
 
+        if not isinstance(visualization, dict):
+            continue
+
         if visualization.get("type") != "line":
             continue
 
@@ -548,7 +559,7 @@ def generate_business_recommendations(
         if x_column not in df.columns or y_column not in df.columns:
             continue
 
-        metric_name = y_column.lower()
+        metric_name = str(y_column).lower()
 
         if not any(
             keyword in metric_name
@@ -568,14 +579,15 @@ def generate_business_recommendations(
             frequency,
         )
 
-        if len(trend_data) < 2:
+        if len(trend_data) < 2 or y_column not in trend_data.columns:
             continue
 
-        first_value = trend_data[y_column].iloc[0]
-        last_value = trend_data[y_column].iloc[-1]
-
-        if pd.isna(first_value) or pd.isna(last_value):
+        trend_values = _finite_numeric_values(trend_data[y_column])
+        if len(trend_values) < 2:
             continue
+
+        first_value = float(trend_values.iloc[0])
+        last_value = float(trend_values.iloc[-1])
 
         if first_value <= 0:
             continue
@@ -663,7 +675,7 @@ def generate_business_recommendations(
         ):
             continue
 
-        valid_values = df[column].dropna()
+        valid_values = _finite_numeric_values(df[column])
 
         if len(valid_values) < 10 or valid_values.nunique() < 2:
             continue
