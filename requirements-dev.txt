@@ -6,3 +6,4 @@ ruff
 isort
 pytest
 pre-commit
+pypdf
