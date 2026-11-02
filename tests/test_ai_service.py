@@ -1,371 +1,228 @@
 import json
-from google.genai import errors
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import Mock
 
+import numpy as np
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
+from app.services import ai_service
 from app.services.ai_service import (
     AIAnalysis,
+    _build_prompt,
+    _serialize_analysis_context,
     generate_ai_analysis,
     get_gemini_client,
 )
-def make_server_error():
-    return errors.ServerError(
-        code=503,
-        response_json={
-            "error": {
-                "code": 503,
-                "message": "Temporary service unavailable",
-                "status": "UNAVAILABLE",
-            }
-        },
-    )
 
-# ==========================================================
-# TEST DATA
-# ==========================================================
 
 VALID_ANALYSIS = {
-    "executive_summary": (
-        "Revenue increased during the reporting period."
-    ),
-    "key_findings": [
-        "Revenue increased by 15%.",
-        "Three regions contributed most of the revenue.",
-        "Missing values were detected.",
-    ],
-    "recommendations": [
-        "Investigate missing values.",
-        "Compare regional performance.",
-        "Monitor revenue trends.",
-    ],
-    "risks_or_anomalies": [
-        "Some records contain missing values."
-    ],
+    "executive_summary": "Revenue increased in the observed period.",
+    "key_findings": ["Revenue increased by 12%."],
+    "recommendations": ["Review the strongest-performing segment."],
+    "risks_or_anomalies": [],
 }
 
 
-@pytest.fixture
-def valid_json_response():
-    return json.dumps(VALID_ANALYSIS)
-
-
-@pytest.fixture
-def mock_gemini_client():
-    client = MagicMock()
+def _mock_client(output_text):
+    client = Mock()
+    client.interactions.create.return_value = SimpleNamespace(
+        output_text=output_text
+    )
     return client
 
 
-@pytest.fixture
-def mock_interaction():
-    interaction = MagicMock()
-    interaction.output_text = json.dumps(VALID_ANALYSIS)
-    return interaction
-
-
-# ==========================================================
-# AI RESPONSE SCHEMA TESTS
-# ==========================================================
-
 def test_ai_analysis_accepts_valid_response():
-    analysis = AIAnalysis.model_validate(VALID_ANALYSIS)
-
-    assert isinstance(analysis, AIAnalysis)
-    assert analysis.executive_summary == (
-        "Revenue increased during the reporting period."
-    )
-    assert len(analysis.key_findings) == 3
-    assert len(analysis.recommendations) == 3
+    result = AIAnalysis.model_validate(VALID_ANALYSIS)
+    assert result.executive_summary.startswith("Revenue")
+    assert result.key_findings == ["Revenue increased by 12%."]
 
 
-def test_ai_analysis_rejects_missing_required_field():
-    invalid_response = {
-        "executive_summary": "Revenue increased.",
-        "key_findings": ["Revenue increased."],
-        "recommendations": ["Monitor revenue."],
-        # risks_or_anomalies is missing
-    }
-
-    with pytest.raises(ValidationError):
-        AIAnalysis.model_validate(invalid_response)
-
-
-def test_ai_analysis_rejects_wrong_field_type():
-    invalid_response = {
-        **VALID_ANALYSIS,
-        "key_findings": "This should be a list, not a string.",
-    }
-
-    with pytest.raises(ValidationError):
-        AIAnalysis.model_validate(invalid_response)
-
-
-def test_ai_analysis_accepts_empty_risks():
-    response = {
-        **VALID_ANALYSIS,
+def test_ai_analysis_allows_fewer_than_three_items():
+    result = AIAnalysis.model_validate({
+        "executive_summary": "Only one conclusion is supported.",
+        "key_findings": ["One supported finding."],
+        "recommendations": [],
         "risks_or_anomalies": [],
+    })
+    assert len(result.key_findings) == 1
+    assert result.recommendations == []
+
+
+def test_ai_analysis_defaults_optional_lists():
+    result = AIAnalysis.model_validate({
+        "executive_summary": "Summary."
+    })
+    assert result.key_findings == []
+    assert result.recommendations == []
+    assert result.risks_or_anomalies == []
+
+
+@pytest.mark.parametrize("bad_summary", ["", "   ", None, 123])
+def test_ai_analysis_rejects_invalid_executive_summary(bad_summary):
+    payload = {**VALID_ANALYSIS, "executive_summary": bad_summary}
+    with pytest.raises(ValidationError):
+        AIAnalysis.model_validate(payload)
+
+
+def test_ai_analysis_rejects_more_than_five_findings():
+    payload = {
+        **VALID_ANALYSIS,
+        "key_findings": [f"Finding {index}" for index in range(6)],
     }
-
-    analysis = AIAnalysis.model_validate(response)
-
-    assert analysis.risks_or_anomalies == []
+    with pytest.raises(ValidationError):
+        AIAnalysis.model_validate(payload)
 
 
-# ==========================================================
-# GEMINI CLIENT TESTS
-# ==========================================================
-
-def test_missing_api_key_raises_value_error():
-    with patch.dict("os.environ", {}, clear=True):
-        with patch(
-            "app.services.ai_service.genai.Client"
-        ) as mock_client:
-            with pytest.raises(
-                ValueError,
-                match="GEMINI_API_KEY is not configured",
-            ):
-                get_gemini_client()
-
-            mock_client.assert_not_called()
+def test_ai_analysis_rejects_blank_list_items():
+    payload = {**VALID_ANALYSIS, "key_findings": ["   "]}
+    with pytest.raises(ValidationError):
+        AIAnalysis.model_validate(payload)
 
 
-def test_gemini_client_uses_environment_api_key():
-    with patch.dict(
-        "os.environ",
-        {"GEMINI_API_KEY": "test-api-key"},
-    ):
-        with patch(
-            "app.services.ai_service.genai.Client"
-        ) as mock_client:
-            get_gemini_client()
-
-            mock_client.assert_called_once_with(
-                api_key="test-api-key",
-                http_options={"timeout": 30_000},
-            )
+def test_ai_analysis_rejects_unexpected_fields():
+    payload = {**VALID_ANALYSIS, "unsupported": "extra"}
+    with pytest.raises(ValidationError):
+        AIAnalysis.model_validate(payload)
 
 
-# ==========================================================
-# SUCCESSFUL AI ANALYSIS TESTS
-# ==========================================================
-
-def test_generate_ai_analysis_returns_valid_model(
-    mock_gemini_client,
-    mock_interaction,
-):
-    mock_gemini_client.interactions.create.return_value = (
-        mock_interaction
-    )
-
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch(
-            "app.services.ai_service.time.sleep"
-        ) as mock_sleep:
-            result = generate_ai_analysis(
-                {"rows": 100, "columns": 5}
-            )
-
-    assert isinstance(result, AIAnalysis)
-    assert result.executive_summary == (
-        VALID_ANALYSIS["executive_summary"]
-    )
-    assert result.key_findings == VALID_ANALYSIS["key_findings"]
-
-    mock_gemini_client.interactions.create.assert_called_once()
-    mock_sleep.assert_not_called()
+def test_ai_analysis_strips_whitespace():
+    payload = {**VALID_ANALYSIS, "executive_summary": "  Summary.  "}
+    result = AIAnalysis.model_validate(payload)
+    assert result.executive_summary == "Summary."
 
 
-def test_generate_ai_analysis_uses_expected_model(
-    mock_gemini_client,
-    mock_interaction,
-):
-    mock_gemini_client.interactions.create.return_value = (
-        mock_interaction
-    )
+def test_get_gemini_client_requires_api_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+        get_gemini_client()
 
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch("app.services.ai_service.time.sleep"):
-            generate_ai_analysis({"rows": 100})
 
-    call_kwargs = (
-        mock_gemini_client.interactions.create.call_args.kwargs
-    )
+def test_get_gemini_client_uses_timeout_and_key(monkeypatch):
+    constructor = Mock(return_value="client")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(ai_service.genai, "Client", constructor)
 
-    assert call_kwargs["model"] == "gemini-3.5-flash-lite"
-    assert call_kwargs["stream"] is False
-    assert call_kwargs["response_format"]["mime_type"] == (
-        "application/json"
+    result = get_gemini_client()
+
+    assert result == "client"
+    constructor.assert_called_once_with(
+        api_key="test-key",
+        http_options={"timeout": ai_service.REQUEST_TIMEOUT_MS},
     )
 
 
-def test_generate_ai_analysis_includes_context_in_prompt(
-    mock_gemini_client,
-    mock_interaction,
-):
-    mock_gemini_client.interactions.create.return_value = (
-        mock_interaction
-    )
-
+def test_context_serializes_numpy_pandas_and_dates():
     context = {
-        "total_revenue": 150000,
-        "growth_percentage": 15,
+        "count": np.int64(4),
+        "ratio": np.float64(0.25),
+        "missing": np.float64(np.nan),
+        "date": pd.Timestamp("2026-11-02"),
+        "array": np.array([1, 2, 3]),
     }
 
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch("app.services.ai_service.time.sleep"):
-            generate_ai_analysis(context)
+    result = json.loads(_serialize_analysis_context(context))
 
-    call_kwargs = (
-        mock_gemini_client.interactions.create.call_args.kwargs
-    )
-
-    assert "150000" in call_kwargs["input"]
-    assert "15" in call_kwargs["input"]
-
-    assert "Distinguish observed facts from interpretations" in (
-        call_kwargs["input"]
-    )
-
-    assert "Do not imply that a correlation" in (
-        call_kwargs["input"]
-    )
+    assert result["count"] == 4
+    assert result["ratio"] == 0.25
+    assert result["missing"] is None
+    assert result["date"] == "2026-11-02T00:00:00"
+    assert result["array"] == [1, 2, 3]
 
 
-# ==========================================================
-# INVALID RESPONSE TESTS
-# ==========================================================
-
-def test_empty_ai_response_raises_value_error(
-    mock_gemini_client,
-):
-    interaction = MagicMock()
-    interaction.output_text = ""
-
-    mock_gemini_client.interactions.create.return_value = (
-        interaction
-    )
-
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch("app.services.ai_service.time.sleep"):
-            with pytest.raises(
-                ValueError,
-                match="Gemini returned no output",
-            ):
-                generate_ai_analysis({"rows": 100})
-
-    assert mock_gemini_client.interactions.create.call_count == 1
+def test_context_serializes_nested_mapping_and_tuples():
+    context = {"nested": {"values": (1, 2, 3)}}
+    assert json.loads(_serialize_analysis_context(context)) == {
+        "nested": {"values": [1, 2, 3]}
+    }
 
 
-def test_malformed_json_eventually_raises_validation_error(
-    mock_gemini_client,
-):
-    interaction = MagicMock()
-    interaction.output_text = "{invalid json"
-
-    mock_gemini_client.interactions.create.return_value = (
-        interaction
-    )
-
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch("app.services.ai_service.time.sleep"):
-            with pytest.raises(ValidationError):
-                generate_ai_analysis({"rows": 100})
-
-    assert mock_gemini_client.interactions.create.call_count == 1
+def test_context_rejects_non_dictionary():
+    with pytest.raises(TypeError, match="dictionary"):
+        _serialize_analysis_context([1, 2, 3])
 
 
-# ==========================================================
-# RETRY BEHAVIOR TESTS
-# ==========================================================
+def test_context_rejects_unsupported_objects():
+    with pytest.raises(TypeError, match="Unsupported value"):
+        _serialize_analysis_context({"bad": object()})
 
-def test_temporary_failure_then_success(
-    mock_gemini_client,
-    mock_interaction,
-):
-    mock_gemini_client.interactions.create.side_effect = [
-        make_server_error(),
-        mock_interaction,
-    ]
 
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch("app.services.ai_service.time.sleep") as mock_sleep:
-            result = generate_ai_analysis({"rows": 100})
+def test_context_rejects_oversized_payload(monkeypatch):
+    monkeypatch.setattr(ai_service, "MAX_CONTEXT_CHARS", 10)
+    with pytest.raises(ValueError, match="too large"):
+        _serialize_analysis_context({"text": "this is too long"})
+
+
+def test_prompt_uses_json_context_and_evidence_rules():
+    prompt = _build_prompt('{"rows":100}')
+    assert '{"rows":100}' in prompt
+    assert "Never invent numbers" in prompt
+    assert "Do not claim causation" in prompt
+    assert "rule-based business recommendations" in prompt
+
+
+def test_generate_ai_analysis_returns_valid_model(monkeypatch):
+    client = _mock_client(json.dumps(VALID_ANALYSIS))
+    monkeypatch.setattr(ai_service, "get_gemini_client", lambda: client)
+
+    result = generate_ai_analysis({"rows": 100})
 
     assert isinstance(result, AIAnalysis)
-    assert mock_gemini_client.interactions.create.call_count == 2
-    mock_sleep.assert_called_once_with(1)
-
-def test_retry_uses_exponential_backoff(mock_gemini_client):
-    mock_gemini_client.interactions.create.side_effect = make_server_error()
-
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch("app.services.ai_service.time.sleep") as mock_sleep:
-            with pytest.raises(errors.ServerError):
-                generate_ai_analysis({"rows": 100})
-
-    assert mock_gemini_client.interactions.create.call_count == 4
-    assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 2, 4]
+    assert result.executive_summary == VALID_ANALYSIS["executive_summary"]
 
 
-def test_final_attempt_raises_original_error(mock_gemini_client):
-    original_error = make_server_error()
-    mock_gemini_client.interactions.create.side_effect = original_error
+def test_generate_ai_analysis_uses_model_structured_output_and_context(monkeypatch):
+    client = _mock_client(json.dumps(VALID_ANALYSIS))
+    monkeypatch.setattr(ai_service, "get_gemini_client", lambda: client)
+    context = {"rows": 100, "metric": np.int64(7)}
 
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with patch("app.services.ai_service.time.sleep"):
-            with pytest.raises(errors.ServerError) as error_info:
-                generate_ai_analysis({"rows": 100})
+    generate_ai_analysis(context)
 
-    assert error_info.value is original_error
-    assert mock_gemini_client.interactions.create.call_count == 4
+    kwargs = client.interactions.create.call_args.kwargs
+    assert kwargs["model"] == ai_service.MODEL_NAME
+    assert kwargs["stream"] is False
+    assert kwargs["response_format"]["mime_type"] == "application/json"
+    assert kwargs["response_format"]["schema"] == AIAnalysis.model_json_schema()
+    assert '"rows":100' in kwargs["input"]
+    assert '"metric":7' in kwargs["input"]
 
-def test_permanent_client_error_is_not_retried(mock_gemini_client):
-    from google.genai import errors
 
-    permanent_error = errors.ClientError(
-        code=400,
-        response_json={
-            "error": {
-                "code": 400,
-                "message": "Invalid request",
-                "status": "INVALID_ARGUMENT",
-            }
-        },
-    )
+def test_generate_ai_analysis_rejects_empty_response(monkeypatch):
+    client = _mock_client("  ")
+    monkeypatch.setattr(ai_service, "get_gemini_client", lambda: client)
 
-    mock_gemini_client.interactions.create.side_effect = permanent_error
+    with pytest.raises(ValueError, match="empty"):
+        generate_ai_analysis({"rows": 100})
 
-    with patch(
-        "app.services.ai_service.get_gemini_client",
-        return_value=mock_gemini_client,
-    ):
-        with pytest.raises(errors.ClientError) as error_info:
-            generate_ai_analysis({"rows": 100})
 
-    assert error_info.value is permanent_error
-    assert mock_gemini_client.interactions.create.call_count == 1
+def test_generate_ai_analysis_rejects_malformed_json_without_app_retry(monkeypatch):
+    client = _mock_client("{not-json")
+    monkeypatch.setattr(ai_service, "get_gemini_client", lambda: client)
+
+    with pytest.raises(ValidationError):
+        generate_ai_analysis({"rows": 100})
+
+    assert client.interactions.create.call_count == 1
+
+
+def test_generate_ai_analysis_propagates_api_error_without_second_retry(monkeypatch):
+    client = Mock()
+    client.interactions.create.side_effect = RuntimeError("simulated API failure")
+    monkeypatch.setattr(ai_service, "get_gemini_client", lambda: client)
+
+    with pytest.raises(RuntimeError, match="simulated API failure"):
+        generate_ai_analysis({"rows": 100})
+
+    # The SDK is the sole owner of its configured transport retry behavior.
+    assert client.interactions.create.call_count == 1
+
+
+def test_invalid_context_fails_before_client_creation(monkeypatch):
+    client_factory = Mock()
+    monkeypatch.setattr(ai_service, "get_gemini_client", client_factory)
+
+    with pytest.raises(TypeError):
+        generate_ai_analysis({"bad": object()})
+
+    client_factory.assert_not_called()

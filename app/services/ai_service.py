@@ -1,202 +1,240 @@
+"""Gemini-backed business interpretation for InsightFlow.
+
+Deterministic InsightFlow engines remain the source of analytical facts.
+This module only translates their prepared context into business language.
+"""
+
+from __future__ import annotations
+
+import json
 import logging
+import math
 import os
 import time
+from collections.abc import Mapping
+from datetime import date, datetime
+from typing import Annotated, Any
 
+import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
 from google import genai
-from google.genai import errors
-from pydantic import BaseModel, Field, ValidationError
-
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "gemini-3.5-flash-lite"
-MAX_RETRIES = 4
+MODEL_NAME = os.getenv("INSIGHTFLOW_GEMINI_MODEL", "gemini-3.5-flash-lite")
 REQUEST_TIMEOUT_MS = 30_000
+MAX_CONTEXT_CHARS = 100_000
+MAX_LIST_ITEMS = 5
 
-# ==========================================================
-# AI RESPONSE SCHEMA
-# ==========================================================
+NonEmptyText = Annotated[str, Field(min_length=1, max_length=2_000)]
+FindingText = Annotated[str, Field(min_length=1, max_length=1_000)]
+
 
 class AIAnalysis(BaseModel):
-    """Structured response expected from the AI analyst."""
+    """Validated, display-ready AI interpretation of deterministic findings."""
 
-    executive_summary: str = Field(
-        description=(
-            "A concise summary of the most important "
-            "business-level findings."
-        )
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
     )
 
-    key_findings: list[str] = Field(
-        description=(
-            "Three to five important findings supported "
-            "by the provided analytical facts."
-        )
+    executive_summary: NonEmptyText = Field(
+        description="A concise executive summary grounded only in supplied evidence."
+    )
+    key_findings: list[FindingText] = Field(
+        default_factory=list,
+        max_length=MAX_LIST_ITEMS,
+        description="Up to five evidence-supported findings; fewer are acceptable."
+    )
+    recommendations: list[FindingText] = Field(
+        default_factory=list,
+        max_length=MAX_LIST_ITEMS,
+        description="Up to five practical recommendations supported by the context."
+    )
+    risks_or_anomalies: list[FindingText] = Field(
+        default_factory=list,
+        max_length=MAX_LIST_ITEMS,
+        description="Evidence-supported risks or anomalies; empty when none are supported."
     )
 
-    recommendations: list[str] = Field(
-        description=(
-            "Three to five practical business recommendations "
-            "based only on the provided analytical facts."
-        )
+    @field_validator(
+        "key_findings",
+        "recommendations",
+        "risks_or_anomalies",
+        mode="before",
     )
+    @classmethod
+    def normalize_missing_lists(cls, value: Any) -> Any:
+        # Some model responses may explicitly return null for an optional list.
+        return [] if value is None else value
 
-    risks_or_anomalies: list[str] = Field(
-        description=(
-            "Important risks, unusual patterns, or areas "
-            "that deserve further investigation. Return an "
-            "empty list when none are supported by the data."
-        )
-    )
-
-
-# ==========================================================
-# GEMINI CLIENT
-# ==========================================================
 
 def get_gemini_client():
-    """Create a Gemini client using the environment API key."""
-
+    """Create a Gemini client using the configured API key and request timeout."""
     api_key = os.getenv("GEMINI_API_KEY")
-
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not configured.")
 
     return genai.Client(
         api_key=api_key,
-        http_options={
-            "timeout": REQUEST_TIMEOUT_MS,
-        },
+        http_options={"timeout": REQUEST_TIMEOUT_MS},
     )
 
 
-# ==========================================================
-# RETRY CLASSIFICATION
-# ==========================================================
+def _to_json_safe(value: Any) -> Any:
+    """Convert common Pandas/NumPy/date values into strict JSON-compatible data."""
+    if value is None or value is pd.NA or value is pd.NaT:
+        return None
 
-def _is_retryable_error(error: Exception) -> bool:
-    """Return whether a failure is likely to succeed on retry."""
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return value.isoformat()
 
-    if isinstance(error, errors.ServerError):
-        return True
+    if isinstance(value, np.ndarray):
+        return [_to_json_safe(item) for item in value.tolist()]
 
-    if isinstance(error, errors.APIError):
-        # Rate limiting and transient server-side failures.
-        return getattr(error, "code", None) in (408, 429, 500, 502, 503, 504)
+    if isinstance(value, np.generic):
+        return _to_json_safe(value.item())
 
-    # Do not retry malformed output or schema validation failures.
-    if isinstance(error, (ValueError, ValidationError)):
-        return False
+    if isinstance(value, Mapping):
+        return {str(key): _to_json_safe(item) for key, item in value.items()}
 
-    # Unknown exceptions may be programming/configuration errors.
-    # Fail fast rather than repeatedly issuing requests.
-    return False
+    if isinstance(value, (list, tuple, set)):
+        return [_to_json_safe(item) for item in value]
+
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    # Pandas extension scalars can expose isna() without being JSON-native.
+    try:
+        missing = pd.isna(value)
+        if isinstance(missing, (bool, np.bool_)) and missing:
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    raise TypeError(
+        f"Unsupported value in AI analysis context: {type(value).__name__}"
+    )
 
 
-# ==========================================================
-# AI ANALYSIS
-# ==========================================================
+def _serialize_analysis_context(analysis_context: dict) -> str:
+    """Validate and serialize context as compact, standards-compliant JSON."""
+    if not isinstance(analysis_context, dict):
+        raise TypeError("analysis_context must be a dictionary.")
 
-def generate_ai_analysis(
-    analysis_context: dict,
-) -> AIAnalysis:
+    safe_context = _to_json_safe(analysis_context)
+    serialized = json.dumps(
+        safe_context,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+    if len(serialized) > MAX_CONTEXT_CHARS:
+        raise ValueError(
+            f"AI analysis context is too large ({len(serialized):,} characters). "
+            f"Maximum allowed size is {MAX_CONTEXT_CHARS:,} characters."
+        )
+
+    return serialized
+
+
+def _build_prompt(serialized_context: str) -> str:
+    """Build a stable prompt that separates evidence from interpretation."""
+    return f"""
+You are InsightFlow's business intelligence analyst.
+
+Your task is to interpret the supplied, already-computed analytical context.
+The deterministic analysis and rule-based recommendations are the source of truth.
+Do not independently invent, recalculate, or infer dataset facts.
+
+STRICT EVIDENCE RULES
+1. Use only facts explicitly present in the supplied context.
+2. Never invent numbers, percentages, trends, segments, causes, or sample sizes.
+3. Do not claim causation from correlation or association.
+4. Do not describe an outlier as an error unless the context establishes that.
+5. Distinguish observed findings from interpretations and hypotheses.
+6. Preserve the numerical meaning and direction of every reported statistic.
+7. Acknowledge missing, conflicting, or insufficient evidence.
+8. Treat rule-based business recommendations as suggestions, not proof.
+9. Do not claim that a recommended action has already been taken.
+10. Prefer concise, specific, decision-useful business language.
+11. Return fewer findings or recommendations when evidence is limited.
+12. Do not pad the response merely to reach a target number of items.
+13. If no risks or anomalies are supported, return an empty list.
+14. Prioritize findings explicitly marked as important or high priority.
+
+OUTPUT REQUIREMENTS
+- Produce one concise executive summary.
+- Include up to five important key findings.
+- Include up to five practical recommendations.
+- Include supported risks or anomalies, or an empty list.
+- Every item must be traceable to the supplied context.
+- Return only data matching the provided JSON response schema.
+
+ANALYSIS CONTEXT (JSON)
+{serialized_context}
+""".strip()
+
+
+def generate_ai_analysis(analysis_context: dict) -> AIAnalysis:
+    """Generate a structured AI interpretation of InsightFlow's analysis context.
+
+    The Google GenAI SDK owns transient transport/API retries. This service does
+    not add a second retry loop, avoiding multiplied request attempts.
     """
-    Generate structured business analysis from deterministic facts.
-
-    Only classified transient API failures are retried. Invalid
-    responses and non-retryable errors are raised immediately.
-    """
+    serialized_context = _serialize_analysis_context(analysis_context)
+    prompt = _build_prompt(serialized_context)
 
     client = get_gemini_client()
+    started_at = time.perf_counter()
 
-    prompt = f"""
-You are the analytical intelligence layer of InsightFlow,
-an automated data analysis platform.
+    try:
+        interaction = client.interactions.create(
+            model=MODEL_NAME,
+            input=prompt,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": AIAnalysis.model_json_schema(),
+            },
+            stream=False,
+        )
 
-Your job is to interpret the analytical facts provided below.
+        output_text = getattr(interaction, "output_text", None)
+        if not isinstance(output_text, str) or not output_text.strip():
+            raise ValueError("Gemini returned an empty AI analysis response.")
 
-IMPORTANT RULES:
+        result = AIAnalysis.model_validate_json(output_text)
+        elapsed_ms = (time.perf_counter() - started_at) * 1_000
+        logger.info(
+            "AI analysis completed: model=%s duration_ms=%.1f "
+            "findings=%d recommendations=%d",
+            MODEL_NAME,
+            elapsed_ms,
+            len(result.key_findings),
+            len(result.recommendations),
+        )
+        return result
 
-1. Use ONLY the information contained in the provided context.
-2. Do NOT invent numbers, trends, relationships, or causes.
-3. Do NOT claim causation unless the data explicitly supports it.
-4. Prefer specific numerical findings when available.
-5. Focus on business meaning rather than describing Python,
-   Pandas, charts, or implementation details.
-6. Recommendations must be practical and connected to the findings.
-7. If the available information is insufficient for a claim,
-   say so instead of guessing.
-8. Distinguish observed facts from interpretations and hypotheses.
-9. When stating a numerical finding, preserve its actual value
-   and meaning from the supplied context.
-10. Do not imply that a correlation, statistical outlier, or
-    unusual pattern proves a business cause or data error.
-11. Explain the evidence supporting an important conclusion
-    whenever that evidence is available in the context.
-12. If the context contains conflicting or insufficient evidence,
-    acknowledge the limitation instead of forcing a conclusion.
-13. Treat business_recommendations as rule-based findings and
-    suggested actions, not as proof of causation.
-14. Preserve the distinction between observed_finding,
-    suggested_action, and rationale.
-15. Do not describe a suggested action as an action already taken.
-16. Prioritize high-priority findings when discussing business risks,
-    while considering the supporting evidence.
-
-ANALYTICAL CONTEXT:
-
-{analysis_context}
-
-Return a concise professional analysis suitable for a
-business analyst or executive dashboard.
-"""
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            interaction = client.interactions.create(
-                model=MODEL_NAME,
-                input=prompt,
-                response_format={
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": AIAnalysis.model_json_schema(),
-                },
-                stream=False,
-            )
-
-            output_text = getattr(interaction, "output_text", None)
-
-            if not output_text:
-                raise ValueError("Gemini returned no output.")
-
-            return AIAnalysis.model_validate_json(output_text)
-
-        except Exception as error:
-            is_final_attempt = attempt == MAX_RETRIES - 1
-
-            if is_final_attempt or not _is_retryable_error(error):
-                logger.error(
-                    "Gemini analysis failed on attempt %s/%s.",
-                    attempt + 1,
-                    MAX_RETRIES,
-                    exc_info=True,
-                )
-                raise
-
-            delay = 2 ** attempt
-
-            logger.warning(
-                "Transient Gemini failure on attempt %s/%s. "
-                "Retrying in %s seconds.",
-                attempt + 1,
-                MAX_RETRIES,
-                delay,
-                exc_info=True,
-            )
-
-            time.sleep(delay)
-
-    raise RuntimeError("Gemini request failed after all retry attempts.")
+    except ValidationError:
+        logger.warning(
+            "Gemini returned a response that failed AIAnalysis validation.",
+            exc_info=True,
+        )
+        raise
+    except Exception:
+        elapsed_ms = (time.perf_counter() - started_at) * 1_000
+        logger.exception(
+            "AI analysis request failed: model=%s duration_ms=%.1f",
+            MODEL_NAME,
+            elapsed_ms,
+        )
+        raise
