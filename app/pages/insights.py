@@ -4,17 +4,8 @@ from app.services.ai_service import (
     generate_ai_analysis,
 )
 
-from app.services.insight_engine import (
-    build_analysis_context,
-    generate_insight,
-)
-
-from app.services.visualization_engine import (
-    recommend_visualizations,
-)
-
-from app.services.recommendation_engine import (
-    generate_business_recommendations,
+from app.services.analysis_orchestrator import (
+    run_deterministic_analysis,
 )
 
 from app.services.dataset_signature import (
@@ -63,9 +54,18 @@ df = st.session_state["dataset"]
 # GENERATE VISUALIZATION RECOMMENDATIONS
 # ==========================================================
 
-visualization_recommendations = (
-    recommend_visualizations(df)
-)
+# Run the deterministic engines once. Both the page and AI context
+# reuse this exact result instead of recomputing findings.
+try:
+    analysis_result = run_deterministic_analysis(df)
+except Exception as error:
+    st.error("Unable to prepare deterministic analysis for this dataset.")
+    st.exception(error)
+    st.stop()
+
+visualization_recommendations = analysis_result.visualization_recommendations
+business_recommendations = analysis_result.business_recommendations
+analysis_context = analysis_result.analysis_context
 
 
 # ==========================================================
@@ -73,37 +73,15 @@ visualization_recommendations = (
 # ==========================================================
 
 st.header("📊 Deterministic Insights")
+st.caption("Analytical findings calculated directly from your dataset.")
 
-st.caption(
-    "Analytical findings calculated directly from your dataset."
-)
-
-
-if not visualization_recommendations:
-
-    st.info(
-        "No analytical recommendations were generated "
-        "for this dataset."
-    )
-
+if not analysis_result.deterministic_findings:
+    st.info("No analytical recommendations were generated for this dataset.")
 else:
-
-    for index, recommendation in enumerate(
-        visualization_recommendations,
-        start=1,
-    ):
-
-        insight = generate_insight(
-            df,
-            recommendation,
-        )
-
-        st.markdown(
-            f"**{index}. "
-            f"{recommendation['type'].title()}**"
-        )
-
-        st.write(insight)
+    for index, finding in enumerate(analysis_result.deterministic_findings, start=1):
+        chart_type = finding.recommendation.get("type", "Analysis")
+        st.markdown(f"**{index}. {str(chart_type).title()}**")
+        st.write(finding.text)
 
 
 # ==========================================================
@@ -118,14 +96,6 @@ st.caption(
     "Actionable suggestions generated from deterministic "
     "business rules. Each recommendation is linked to an "
     "observable pattern in your dataset."
-)
-
-
-business_recommendations = (
-    generate_business_recommendations(
-        df,
-        visualization_recommendations,
-    )
 )
 
 
@@ -220,25 +190,6 @@ else:
 # BUILD ANALYTICAL CONTEXT FOR GEMINI
 # ==========================================================
 
-analysis_context = build_analysis_context(
-    df,
-    visualization_recommendations,
-)
-
-
-# Add deterministic business recommendations to the AI context.
-analysis_context["business_recommendations"] = [
-    {
-        "rule_id": item["rule_id"],
-        "category": item["category"],
-        "priority": item["priority"],
-        "title": item["title"],
-        "observed_finding": item["finding"],
-        "suggested_action": item["action"],
-        "rationale": item["rationale"],
-    }
-    for item in business_recommendations
-]
 
 # ==========================================================
 # DATASET SIGNATURE

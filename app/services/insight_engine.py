@@ -17,6 +17,7 @@ def _finite_numeric(series: pd.Series) -> pd.Series:
 def build_analysis_context(
     df: pd.DataFrame,
     recommendations: list[dict],
+    deterministic_findings: list[dict] | None = None,
 ) -> dict:
     """
     Build a structured analytical context for the AI layer.
@@ -76,27 +77,24 @@ def build_analysis_context(
     # 2. DETERMINISTIC ANALYTICAL FINDINGS
     # ======================================================
 
-    for recommendation in recommendations:
-
-        insight = generate_insight(
-            df,
-            recommendation,
-        )
-
-        context["deterministic_findings"].append(
-            {
-                "type": recommendation.get(
-                    "type"
-                ),
-                "reason": recommendation.get(
-                    "reason"
-                ),
-                "score": recommendation.get(
-                    "score"
-                ),
-                "insight": insight,
-            }
-        )
+    if deterministic_findings is None:
+        # Preserve the original public behaviour for existing callers.
+        for recommendation in recommendations:
+            insight = generate_insight(df, recommendation)
+            context["deterministic_findings"].append(
+                {
+                    "type": recommendation.get("type"),
+                    "reason": recommendation.get("reason"),
+                    "score": recommendation.get("score"),
+                    "insight": insight,
+                }
+            )
+    else:
+        # Orchestrator callers pass already-computed findings to avoid
+        # repeating potentially expensive deterministic analysis.
+        context["deterministic_findings"] = [
+            dict(item) for item in deterministic_findings
+        ]
 
     # ======================================================
     # 3. VISUALIZATION RECOMMENDATIONS

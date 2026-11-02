@@ -4,16 +4,8 @@ from app.services.report_generator import (
     generate_pdf_report,
 )
 
-from app.services.insight_engine import (
-    generate_insight,
-)
-
-from app.services.visualization_engine import (
-    recommend_visualizations,
-)
-
-from app.services.recommendation_engine import (
-    generate_business_recommendations,
+from app.services.analysis_orchestrator import (
+    run_deterministic_analysis,
 )
 
 from app.services.chart_export_service import (
@@ -149,17 +141,9 @@ with metric_col3:
 # ==========================================================
 
 try:
-
-    visualization_recommendations = (
-        recommend_visualizations(df)
-    )
-
-    business_recommendations = (
-        generate_business_recommendations(
-            df,
-            visualization_recommendations,
-        )
-    )
+    analysis_result = run_deterministic_analysis(df)
+    visualization_recommendations = analysis_result.visualization_recommendations
+    business_recommendations = analysis_result.business_recommendations
 
 except Exception as error:
 
@@ -177,36 +161,19 @@ except Exception as error:
 # BUILD DETERMINISTIC INSIGHTS
 # ==========================================================
 
-deterministic_insights = []
-
-for index, recommendation in enumerate(
-    visualization_recommendations,
-    start=1,
-):
-
-    try:
-
-        insight_text = generate_insight(
-            df,
-            recommendation,
-        )
-
-        deterministic_insights.append(
-            {
-                "title": (
-                    f"{recommendation.get('type', 'Analysis').title()} "
-                    f"Finding {index}"
-                ),
-                "text": str(insight_text),
-            }
-        )
-
-    except Exception as error:
-
-        # Preserve the rest of the report if one finding fails.
-        st.warning(
-            f"Finding {index} could not be generated: {error}"
-        )
+deterministic_insights = [
+    {
+        "title": (
+            f"{finding.recommendation.get('type', 'Analysis').title()} "
+            f"Finding {index}"
+        ),
+        "text": finding.text,
+    }
+    for index, finding in enumerate(
+        analysis_result.deterministic_findings,
+        start=1,
+    )
+]
 
 
 # ==========================================================
