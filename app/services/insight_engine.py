@@ -549,3 +549,4 @@ def generate_insight(
         "No analytical explanation is available "
         f"for chart type: {chart_type}."
     )
+

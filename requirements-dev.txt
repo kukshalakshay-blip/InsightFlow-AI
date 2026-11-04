@@ -1,9 +1,4 @@
-# Install application dependencies and development tools.
 -r requirements.txt
-
-black
-ruff
-isort
-pytest
-pre-commit
-pypdf
+pytest>=8.3,<10.0
+pytest-cov>=6.0,<8.0
+ruff>=0.9,<1.0

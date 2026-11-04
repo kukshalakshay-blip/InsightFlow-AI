@@ -1,4 +1,5 @@
 import runpy
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -63,6 +64,16 @@ def page_mocks():
     return_value=b"%PDF-1.4 test",
     name="pdf_generator",
 ),
+        patch(
+            "app.services.analysis_orchestrator.run_deterministic_analysis",
+            return_value=SimpleNamespace(
+                visualization_recommendations=[],
+                deterministic_findings=[],
+                business_recommendations=[],
+                analysis_context={},
+                dataset_summary={"rows": 0, "columns": 0, "missing_cells": 0},
+            ),
+        ),
     ]
 
     started = []

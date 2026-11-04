@@ -1,97 +1,85 @@
 # InsightFlow AI
 
-InsightFlow AI is a Streamlit-based data analysis workspace that helps users upload tabular data, inspect data quality, explore visualizations, generate deterministic findings, optionally request AI-assisted interpretation, and export a PDF report.
+InsightFlow AI is a Streamlit-based analytics workspace for tabular datasets. It combines deterministic data profiling, visualization recommendations, statistical findings, rule-based business recommendations, optional Gemini interpretation, and PDF export.
 
-## Features
+## Product capabilities
 
-- **Data upload:** Load CSV and Excel files.
-- **Data validation and profiling:** Review dataset dimensions, column characteristics, missing values, and basic statistics.
-- **Visualization recommendations:** Suggest charts based on column types and relationships.
-- **Deterministic insights:** Explain distributions, correlations, category summaries, and time-series trends using calculated values.
-- **Optional AI analysis:** Use the Gemini API to interpret a structured analytical context.
-- **PDF reports:** Generate a downloadable report with analytical summaries and visualizations.
-- **Automated tests:** Exercise core services, pages, reporting, and session-state behavior.
+- CSV and Excel upload with validation and data preview.
+- Dataset profiling, missing-value and duplicate summaries, and column-level characteristics.
+- Automated visualization recommendations and interactive Plotly charts.
+- Deterministic statistical findings and rule-based business recommendations.
+- Optional Gemini-generated executive interpretation grounded in deterministic analysis.
+- PDF reports with analytical findings, recommendations, and optional chart images.
+- Dataset-signature-based invalidation of stale AI and PDF artifacts.
 
-## Architecture
-
-```text
-main.py                  Streamlit entry point and navigation
-app/pages/               Home, upload, profile, visualization, insights, reports
-app/services/            Loading, validation, profiling, analysis, charts, AI, reports
-app/core/                Shared application configuration
-app/models/              Pydantic models
-tests/                   Automated test suite
-scripts/                 Optional command-line demos
-```
-
-The application separates page-level UI from reusable services. Statistical findings are calculated locally; the optional AI layer receives a structured context and should interpret, not replace, those calculations.
+JSON and Parquet loading are supported by the lower-level loader service but are not exposed in the current Streamlit upload control.
 
 ## Requirements
 
-- Python 3.11 or another Python version compatible with the pinned dependencies
-- pip
-- A Gemini API key only if you want to use AI-assisted analysis
+- Python 3.11 (recommended; dependencies are tested/targeted for this version).
+- pip.
+- Gemini API key only for AI-assisted analysis. All deterministic features work without it.
 
-## Installation
-
-Create and activate a virtual environment from the project root. For example, with Conda:
+## Local setup (Windows PowerShell)
 
 ```powershell
 conda create -n insightflow python=3.11 -y
 conda activate insightflow
 python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
-```
-
-The `requirements.txt` file contains application dependencies. `requirements-dev.txt` installs those dependencies plus development tools and pytest.
-
-## Configuration
-
-Create a local `.env` file in the project root if you want Gemini-powered analysis:
-
-```dotenv
-GEMINI_API_KEY=replace_with_your_own_key
-```
-
-Never commit `.env` or share it in project archives. The app's non-AI analytical features should not require a Gemini key.
-
-## Run the application
-
-From the project root:
-
-```powershell
+Copy-Item .env.example .env
 streamlit run main.py
 ```
 
-## Run tests
+Open the local address printed by Streamlit, normally `http://localhost:8501`.
+
+To enable Gemini, add your own `GEMINI_API_KEY` to `.env`. Never commit `.env` or share it in source archives.
+
+## Run verification
 
 ```powershell
 python -m pytest
+python -m compileall -q app main.py
 ```
 
-Pytest is configured to discover tests under `tests/`. Optional demos in `scripts/` are not executed during test collection.
+The chart-image export path uses Plotly + Kaleido. The pinned Kaleido 0.2.1 package includes its rendering runtime and avoids requiring a separately installed Chrome browser.
 
-## Optional demos
-
-To run the recommendation demo with your own CSV file:
+## Docker
 
 ```powershell
-python scripts/demo_recommendations.py path\to\your_dataset.csv
+Copy-Item .env.example .env
+# Add GEMINI_API_KEY to .env only if AI analysis is required.
+docker compose up --build
 ```
 
-To run the AI demo, configure `GEMINI_API_KEY` first:
+Then open `http://localhost:8501`. To stop the service, run `docker compose down`.
 
-```powershell
-python scripts/demo_ai.py
+## Repository layout
+
+```text
+main.py                  Streamlit entry point and navigation
+app/pages/               User-facing Streamlit pages
+app/services/            Loading, validation, profiling, analysis, charts, AI and PDF services
+app/core/                Typed environment configuration
+app/models/              Shared data models
+data/                    Empty data directories; keep private datasets local
+scripts/                 Optional command-line demos
+tests/                   Automated tests
+Dockerfile               Container image
+compose.yaml             Local container orchestration
+requirements.txt         Runtime dependencies
+requirements-dev.txt     Runtime + development dependencies
 ```
 
-## Security and limitations
+## Data handling and limitations
 
-- Uploaded datasets may contain sensitive information; use appropriate local data-handling practices.
-- AI output is generated text and should be checked against the deterministic findings before business decisions are made.
-- Correlation and outlier detection indicate patterns, not causation or proof of data errors.
-- The repository's automated tests do not replace an end-to-end smoke test in the target environment.
+- Uploaded data is held in the active Streamlit session; this project does not provide persistent user accounts or a database-backed dataset store.
+- Do not upload confidential or regulated data to an environment you do not control.
+- AI analysis sends a compact analytical context to Google's Gemini API when explicitly requested. Raw dataset rows are not intentionally sent by the AI service; inspect the context builder before using sensitive datasets.
+- AI output is generated interpretation, not verified professional advice. Check conclusions against the underlying data.
+- Correlation and outlier detection do not establish causation or prove data errors.
+- The app is a single-user/session-oriented application. Multi-user authentication, tenant isolation, persistent storage, and operational monitoring are outside this release's current scope.
 
 ## License
 
-See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

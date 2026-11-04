@@ -1,23 +1,31 @@
 # Python
 __pycache__/
 *.py[cod]
-*.egg-info/
-.eggs/
-.env
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Environments and secrets
 .venv/
-
-# IDEs
-.vscode/
-.idea/
-
-# Data
-data/raw/
-data/processed/
-
-# Notebook checkpoints
-.ipynb_checkpoints/
+venv/
+.env
 .env.*
 !.env.example
-.pytest_cache/
-htmlcov/
-.coverage
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Local data and generated artifacts
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+reports/
+*.pdf
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
