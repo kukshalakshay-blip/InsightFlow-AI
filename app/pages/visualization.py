@@ -57,9 +57,17 @@ st.divider()
 # Generate visualization recommendations
 # --------------------------------------------------
 
+# Use the AI profile only when it belongs to the currently active dataset.
+# If understanding is unavailable, the deterministic planner remains functional.
+active_signature = st.session_state.get("active_dataset_signature")
+understanding = None
+if st.session_state.get("dataset_understanding_signature") == active_signature:
+    understanding = st.session_state.get("dataset_understanding")
+
 recommendations = recommend_visualizations(
     df,
     max_recommendations=10,
+    understanding=understanding,
 )
 
 
@@ -129,7 +137,8 @@ for index, recommendation in enumerate(
     )
 
       st.caption(
-        f"Recommendation score: {score:.2f}"
+        f"Recommendation score: {score:.2f} · "
+        f"Chart type: {chart_type.title()}"
     )
 
       st.write(

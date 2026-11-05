@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 logger = logging.getLogger(__name__)
 DEFAULT_MAX_POINTS = 20_000
 DEFAULT_BINS = 30
-AGGREGATIONS = {"sum", "mean", "median", "count", "min", "max"}
+AGGREGATIONS = {"sum", "mean", "median", "count", "min", "max", "last"}
 
 
 class ChartRenderingError(ValueError):
@@ -125,21 +125,48 @@ def render_line(df, recommendation):
     x = _column(df, recommendation.get("x"), "date")
     y = _column(df, recommendation.get("y"), "measure")
     frequency = recommendation.get("frequency", "ME")
+    aggregation = str(recommendation.get("aggregation", "sum")).lower()
     if not isinstance(frequency, str) or not frequency.strip():
         raise ChartRenderingError("The line-chart frequency must be a valid pandas frequency string.")
+    if aggregation not in AGGREGATIONS:
+        raise ChartRenderingError(
+            f"Unsupported line aggregation '{aggregation}'. Choose from: {', '.join(sorted(AGGREGATIONS))}."
+        )
     dates = pd.to_datetime(df[x], errors="coerce")
     values = _numeric(df, y, "measure")
     working = pd.DataFrame({x: dates, y: values}).dropna()
     if working.empty:
         raise ChartRenderingError("No valid date/measure pairs are available for the line chart.")
     try:
-        data = (working.sort_values(x).set_index(x)[y].resample(frequency)
-                .sum(min_count=1).dropna().rename_axis(x).reset_index())
+        resampler = working.sort_values(x).set_index(x)[y].resample(frequency)
+        if aggregation == "last":
+            aggregated = resampler.last()
+        elif aggregation == "count":
+            aggregated = resampler.count()
+        else:
+            aggregated = getattr(resampler, aggregation)(min_count=1) if aggregation == "sum" else getattr(resampler, aggregation)()
+        data = aggregated.dropna().rename_axis(x).reset_index()
     except (ValueError, TypeError) as exc:
         raise ChartRenderingError(f"Invalid line-chart frequency '{frequency}': {exc}") from exc
     if data.empty:
         raise ChartRenderingError("The selected frequency produced no line-chart data.")
     fig = px.line(data, x=x, y=y, title=f"{y} over {x}", markers=True)
+    return _theme(fig, recommendation)
+
+
+def render_box(df, recommendation):
+    """Render a numeric distribution grouped by a categorical variable."""
+    _validate_df(df)
+    category = _column(df, recommendation.get("x"), "category")
+    value = _column(df, recommendation.get("y"), "measure")
+    numeric = _numeric(df, value, "measure")
+    working = pd.DataFrame({category: df[category], value: numeric}).dropna()
+    if working.empty:
+        raise ChartRenderingError("No valid category/value pairs are available for the box plot.")
+    if working[category].nunique(dropna=True) > 30:
+        raise ChartRenderingError("Box plots are limited to 30 categories for readability.")
+    fig = px.box(working, x=category, y=value, points="outliers",
+                 title=f"Distribution of {value} by {category}")
     return _theme(fig, recommendation)
 
 
@@ -164,6 +191,7 @@ _RENDERERS = {
     "histogram": render_histogram,
     "bar": render_bar,
     "line": render_line,
+    "box": render_box,
     "map": render_map,
 }
 

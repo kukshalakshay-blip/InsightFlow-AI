@@ -1,434 +1,223 @@
+"""Deterministic, intelligence-aware visualization planning for InsightFlow."""
+from __future__ import annotations
+
+from typing import Any
+
 import pandas as pd
 
 from app.services.column_intelligence import analyze_columns
 
 
-# =========================================================
-# 1. Choosing the Best Business Measure
-# =========================================================
+MEASURE_PRIORITY = ("sales", "revenue", "profit", "amount", "value", "price", "quantity")
 
-def choose_best_measure(
-    df: pd.DataFrame,
-    measure_columns: list[str],
-) -> str | None:
-    """
-    Select the most relevant numeric measure for business charts.
 
-    Priority:
-    1. Sales
-    2. Revenue
-    3. Profit
-    4. Amount
-    5. Value
-    6. Quantity
+def _as_dict(value: Any) -> dict:
+    if value is None:
+        return {}
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return value if isinstance(value, dict) else {}
 
-    If no priority keyword matches, return the first available
-    measure. Return None when no measures exist.
-    """
 
-    priority_keywords = [
-        "sales",
-        "revenue",
-        "profit",
-        "amount",
-        "value",
-        "quantity",
-    ]
+def _understanding_maps(understanding: Any) -> tuple[str, dict[str, dict]]:
+    """Extract validated domain and column roles from the saved AI profile."""
+    payload = _as_dict(understanding)
+    domain = str(payload.get("domain", "general")).lower()
+    mappings = {}
+    for item in payload.get("column_meanings", []) or []:
+        if isinstance(item, dict) and item.get("column"):
+            mappings[str(item["column"])] = item
+    return domain, mappings
 
-    for keyword in priority_keywords:
+
+def choose_best_measure(df: pd.DataFrame, measure_columns: list[str]) -> str | None:
+    """Select a likely measure using familiar business naming priorities."""
+    del df  # retained for backwards-compatible public signature
+    for keyword in MEASURE_PRIORITY:
         for column in measure_columns:
             if keyword in column.lower():
                 return column
-
-    if measure_columns:
-        return measure_columns[0]
-
-    return None
+    return measure_columns[0] if measure_columns else None
 
 
-# =========================================================
-# 2. Scatter Plot Suitability
-# =========================================================
+def is_suitable_for_scatter(semantic_type: str) -> bool:
+    return semantic_type in {"numeric_measure", "count"}
 
-def is_suitable_for_scatter(
-    semantic_type: str,
-) -> bool:
-    """
-    Determine whether a column is suitable for a scatter plot.
-
-    Scatter plots are suitable for numeric measures and counts.
-    """
-
-    return semantic_type in {
-        "numeric_measure",
-        "count",
-    }
-
-
-# =========================================================
-# 3. Selecting Diverse Visualization Recommendations
-# =========================================================
 
 def select_diverse_recommendations(
-    recommendations: list[dict],
-    max_recommendations: int,
+    recommendations: list[dict], max_recommendations: int
 ) -> list[dict]:
-    """
-    Select diverse visualizations while respecting:
-    - The maximum number of recommendations.
-    - The maximum number of charts of each type.
-    """
-
-    # Fix: return immediately for zero or negative limits.
     if max_recommendations <= 0:
         return []
-
-    type_limits = {
-        "scatter": 3,
-        "line": 2,
-        "bar": 3,
-        "histogram": 2,
-        "map": 1,
-    }
-
-    selected = []
-    type_counts = {}
-
-    for recommendation in recommendations:
+    type_limits = {"scatter": 3, "line": 2, "bar": 3, "histogram": 2,
+                   "map": 1, "box": 3}
+    selected, counts = [], {}
+    seen_signatures = set()
+    for index, recommendation in enumerate(recommendations):
         chart_type = recommendation["type"]
-
-        current_count = type_counts.get(
-            chart_type,
-            0,
-        )
-
-        limit = type_limits.get(
-            chart_type,
-            2,
-        )
-
-        # Skip a chart type that has reached its limit.
-        if current_count >= limit:
+        signature = (chart_type, recommendation.get("x"), recommendation.get("y"),
+                     recommendation.get("column"), recommendation.get("latitude"),
+                     recommendation.get("longitude"))
+        # Generic recommendations without column metadata are distinct entries;
+        # retain the legacy selector contract for caller-supplied lists.
+        if not any(value is not None for value in signature[1:]):
+            signature = (*signature, index)
+        if signature in seen_signatures:
             continue
-
+        if counts.get(chart_type, 0) >= type_limits.get(chart_type, 2):
+            continue
         selected.append(recommendation)
-
-        type_counts[chart_type] = current_count + 1
-
-        # Stop when the requested maximum is reached.
+        seen_signatures.add(signature)
+        counts[chart_type] = counts.get(chart_type, 0) + 1
         if len(selected) >= max_recommendations:
             break
-
     return selected
 
 
-# =========================================================
-# 4. Choosing Time-Series Frequency
-# =========================================================
-
-def choose_time_frequency(
-    df: pd.DataFrame,
-    date_column: str,
-) -> str:
-    """
-    Choose a time-series frequency based on the observed date range.
-
-    Rules:
-    - Date span of 90 days or less: Daily.
-    - Date span of 91 to 365 days: Weekly.
-    - Date span greater than 365 days: Month-end.
-
-    Invalid dates are ignored.
-
-    Returns pandas frequency aliases:
-    D  = Daily
-    W  = Weekly
-    ME = Month-end
-    """
-
-    valid_dates = pd.to_datetime(
-        df[date_column],
-        errors="coerce",
-    ).dropna()
-
+def choose_time_frequency(df: pd.DataFrame, date_column: str) -> str:
+    valid_dates = pd.to_datetime(df[date_column], errors="coerce").dropna()
     if valid_dates.empty:
         return "D"
-
-    earliest_date = valid_dates.min().normalize()
-    latest_date = valid_dates.max().normalize()
-
-    date_span_days = (latest_date - earliest_date).days + 1
-
-    if date_span_days <= 90:
+    span = (valid_dates.max().normalize() - valid_dates.min().normalize()).days + 1
+    if span <= 90:
         return "D"
-
-    if date_span_days <= 365:
+    if span <= 365:
         return "W"
-
     return "ME"
 
-# =========================================================
-# 5. Recommending Visualizations
-# =========================================================
+
+def _semantic_columns(df: pd.DataFrame, understanding: Any) -> list[dict]:
+    """Merge deterministic structural typing with optional AI semantic roles.
+
+    Deterministic typing remains the fallback and protects against malformed or
+    stale LLM mappings. AI data_role is used only when its column exists.
+    """
+    info = analyze_columns(df)
+    _, mappings = _understanding_maps(understanding)
+    role_map = {
+        "continuous": "numeric_measure",
+        "binary_categorical": "binary_category",
+        "ordinal_categorical": "ordinal_category",
+        "nominal_categorical": "categorical",
+        "datetime": "datetime",
+        "identifier": "identifier",
+        "text": "high_cardinality_categorical",
+        "target": "target",
+        "unknown": "unknown",
+    }
+    for item in info:
+        mapping = mappings.get(item["column"])
+        if not mapping:
+            continue
+        ai_role = role_map.get(str(mapping.get("data_role", "unknown")))
+        # Preserve stronger deterministic special cases (coordinates, dates,
+        # identifiers, years, counts). AI resolves ordinary numeric/category ambiguity.
+        if ai_role and item["semantic_type"] not in {
+            "geographic_latitude", "geographic_longitude", "geographic_code",
+            "datetime", "year", "temporal_component", "identifier", "constant",
+        }:
+            item["semantic_type"] = ai_role
+        item["semantic_role"] = mapping.get("semantic_role", "")
+        item["semantic_confidence"] = mapping.get("confidence", 0.0)
+        item["unit"] = mapping.get("unit", "")
+    return info
+
 
 def recommend_visualizations(
     df: pd.DataFrame,
     max_recommendations: int = 10,
+    understanding: Any = None,
 ) -> list[dict]:
+    """Plan a diverse set of statistically suitable charts for a dataset.
+
+    ``understanding`` is optional to preserve existing callers. It accepts the
+    DatasetUnderstanding model or its ``model_dump()`` dictionary.
     """
-    Recommend appropriate visualizations for a dataset.
-
-    Supported recommendations:
-    - Histograms for numeric columns.
-    - Bar charts for categorical columns.
-    - Scatter plots for numeric relationships.
-    - Line charts for date-based trends.
-    - Maps when latitude and longitude columns are detected.
-
-    Recommendations are scored, sorted, and diversified.
-    """
-
-    # Fix: enforce the limit at the public function level too.
-    if max_recommendations <= 0:
+    if max_recommendations <= 0 or not isinstance(df, pd.DataFrame) or df.empty:
         return []
 
-    recommendations = []
+    domain, _ = _understanding_maps(understanding)
+    columns = _semantic_columns(df, understanding)
+    by_type = lambda *types: [x["column"] for x in columns if x["semantic_type"] in types]
+    measures = by_type("numeric_measure", "count")
+    # Counts are valid business measures, but prefer true continuous measures.
+    continuous_measures = by_type("numeric_measure")
+    measure_pool = continuous_measures or measures
+    best_measure = choose_best_measure(df, measure_pool)
+    numeric_distribution = by_type("numeric_measure", "count")
+    categories = by_type("categorical", "binary_category", "ordinal_category")
+    dates = by_type("datetime")
+    lats, lons = by_type("geographic_latitude"), by_type("geographic_longitude")
 
-    # Analyze the semantic meaning of dataset columns.
-    column_information = analyze_columns(df)
+    recs: list[dict] = []
 
-    # -----------------------------------------------------
-    # Identify columns by semantic type
-    # -----------------------------------------------------
+    # Distribution charts exclude binary/ordinal codes and identifiers.
+    for column in numeric_distribution:
+        if df[column].nunique(dropna=True) > 1:
+            recs.append({"type": "histogram", "column": column, "score": 0.62,
+                         "reason": f"Examine the distribution and spread of {column}.",
+                         "title": f"Distribution of {column}"})
 
-    numeric_columns = [
-        item["column"]
-        for item in column_information
-        if item["semantic_type"] in {
-            "numeric_measure",
-            "count",
-        }
-    ]
+    # Category comparisons: healthcare benefits from distribution comparisons
+    # (box plots); other domains default to aggregate bar charts.
+    for category in categories:
+        cardinality = int(df[category].nunique(dropna=True))
+        if not 2 <= cardinality <= 20:
+            continue
+        if best_measure is None:
+            recs.append({"type": "bar", "x": category, "column": category,
+                         "aggregation": "count", "score": 0.70,
+                         "reason": f"Show the number of records in each {category} group.",
+                         "title": f"Records by {category}"})
+        elif domain == "healthcare" and df[best_measure].nunique(dropna=True) > 2:
+            recs.append({"type": "box", "x": category, "y": best_measure,
+                         "score": 0.82 if cardinality <= 6 else 0.72,
+                         "reason": f"Compare the distribution of {best_measure} across {category} groups.",
+                         "title": f"{best_measure} by {category}"})
+        else:
+            aggregation = "mean" if domain in {"healthcare", "social_sciences"} else "sum"
+            recs.append({"type": "bar", "x": category, "column": category,
+                         "y": best_measure, "value_column": best_measure,
+                         "aggregation": aggregation,
+                         "score": 0.78 if cardinality <= 10 else 0.70,
+                         "reason": f"Compare {aggregation} {best_measure} across {category} groups.",
+                         "title": f"{aggregation.title()} {best_measure} by {category}"})
 
-    measure_columns = [
-        item["column"]
-        for item in column_information
-        if item["semantic_type"] == "numeric_measure"
-    ]
-
-    # Use count columns as fallback measures when no
-    # ordinary numeric measures are available.
-    if not measure_columns:
-        measure_columns = [
-            item["column"]
-            for item in column_information
-            if item["semantic_type"] == "count"
-        ]
-
-    categorical_columns = [
-        item["column"]
-        for item in column_information
-        if item["semantic_type"] == "categorical"
-    ]
-
-    datetime_columns = [
-        item["column"]
-        for item in column_information
-        if item["semantic_type"] == "datetime"
-    ]
-
-    latitude_columns = [
-        item["column"]
-        for item in column_information
-        if item["semantic_type"] == "geographic_latitude"
-    ]
-
-    longitude_columns = [
-        item["column"]
-        for item in column_information
-        if item["semantic_type"] == "geographic_longitude"
-    ]
-
-    # Select the primary business measure.
-    best_measure = choose_best_measure(
-        df,
-        measure_columns,
-    )
-
-    # -----------------------------------------------------
-    # A. Histogram Recommendations
-    # -----------------------------------------------------
-
-    for column in numeric_columns:
-        recommendations.append({
-            "type": "histogram",
-            "column": column,
-            "score": 0.60,
-            "reason": (
-                f"Explore the distribution of '{column}' "
-                "to understand its spread and frequency."
-            ),
-        })
-
-       # -----------------------------------------------------
-    # B. Bar Chart Recommendations
-    # -----------------------------------------------------
-
-    if best_measure is not None:
-
-        for column in categorical_columns:
-
-            unique_count = df[column].nunique(
-                dropna=True,
-            )
-
-            # Avoid categories with too many distinct values.
-            if 2 <= unique_count <= 20:
-
-                score = 0.70
-
-                # Prefer simpler categories for readability.
-                if unique_count <= 10:
-                    score += 0.10
-
-                recommendations.append(
-                    {
-                        "type": "bar",
-                        "column": column,
-
-                        # X-axis: categorical column.
-                        "x": column,
-
-                        # Y-axis: numeric business measure.
-                        "y": best_measure,
-
-                        # Explicit field expected by chart_renderer.py.
-                        "value_column": best_measure,
-
-                        "score": score,
-
-                        "reason": (
-                            f"Compare '{best_measure}' across "
-                            f"the categories of '{column}'."
-                        ),
-                    }
-                )
-    # -----------------------------------------------------
-    # C. Scatter Plot Recommendations
-    # -----------------------------------------------------
-
-    scatter_columns = [
-        item["column"]
-        for item in column_information
-        if is_suitable_for_scatter(
-            item["semantic_type"],
-        )
-    ]
-
+    # Scatter is limited to continuous/count measures, never binary/ordinal codes.
+    scatter_columns = by_type("numeric_measure", "count")
     if len(scatter_columns) >= 2:
-
-        correlation_matrix = df[
-            scatter_columns
-        ].corr(numeric_only=True)
-
-        for i, column_x in enumerate(scatter_columns):
-
-            for column_y in scatter_columns[i + 1:]:
-
-                # Skip pairs that are absent from the
-                # computed correlation matrix.
-                if (
-                    column_x not in correlation_matrix.columns
-                    or column_y not in correlation_matrix.columns
-                ):
+        corr = df[scatter_columns].corr(numeric_only=True)
+        for i, x in enumerate(scatter_columns):
+            for y in scatter_columns[i + 1:]:
+                value = corr.at[x, y]
+                if pd.isna(value):
                     continue
-
-                correlation = correlation_matrix.at[
-                    column_x,
-                    column_y,
-                ]
-
-                # Correlation may be undefined.
-                if pd.isna(correlation):
+                # Require a non-trivial association to avoid chart spam.
+                if abs(float(value)) < 0.25:
                     continue
+                recs.append({"type": "scatter", "x": x, "y": y,
+                             "score": 0.50 + abs(float(value)) * 0.45,
+                             "reason": f"Explore the relationship between {x} and {y} (Pearson r={value:.2f}).",
+                             "title": f"{y} vs {x}"})
 
-                if not isinstance(correlation, (int, float)):
-                    continue
+    # Time-series: aggregation is explicit and selected by domain/measure semantics.
+    for date_column in dates:
+        frequency = choose_time_frequency(df, date_column)
+        for measure in measure_pool:
+            aggregation = "sum"
+            if domain in {"healthcare", "social_sciences"}:
+                aggregation = "mean"
+            elif any(token in measure.lower() for token in ("price", "rate", "return", "temperature", "score", "index")):
+                aggregation = "mean"
+            recs.append({"type": "line", "x": date_column, "y": measure,
+                         "frequency": frequency, "aggregation": aggregation,
+                         "score": 0.86, "reason": f"Track {aggregation} {measure} over time.",
+                         "title": f"{aggregation.title()} {measure} over time"})
 
-                correlation_value = float(correlation)
-                score = (
-                    0.50
-                    + abs(correlation_value) * 0.50
-                )
+    if lats and lons:
+        recs.append({"type": "map", "latitude": lats[0], "longitude": lons[0],
+                     "score": 0.90, "reason": "Explore the geographic distribution of records.",
+                     "title": "Geographic Distribution"})
 
-                recommendations.append({
-                    "type": "scatter",
-                    "x": column_x,
-                    "y": column_y,
-                    "score": score,
-                    "reason": (
-                        f"Explore the relationship between "
-                        f"'{column_x}' and '{column_y}'. "
-                        f"Correlation: {correlation_value:.2f}."
-                    ),
-                })
-
-    # -----------------------------------------------------
-    # D. Time-Series Line Chart Recommendations
-    # -----------------------------------------------------
-
-    for date_column in datetime_columns:
-
-        frequency = choose_time_frequency(
-            df,
-            date_column,
-        )
-
-        for measure_column in measure_columns:
-
-            recommendations.append({
-                "type": "line",
-                "x": date_column,
-                "y": measure_column,
-                "frequency": frequency,
-                "score": 0.85,
-                "reason": (
-                    f"Track '{measure_column}' over time "
-                    f"using '{date_column}'."
-                ),
-            })
-
-    # -----------------------------------------------------
-    # E. Geographic Map Recommendations
-    # -----------------------------------------------------
-
-    if latitude_columns and longitude_columns:
-
-        recommendations.append({
-            "type": "map",
-            "latitude": latitude_columns[0],
-            "longitude": longitude_columns[0],
-            "score": 0.90,
-            "reason": (
-                "Explore the geographic distribution "
-                "of the available coordinates."
-            ),
-        })
-
-    # -----------------------------------------------------
-    # F. Sort Recommendations by Score
-    # -----------------------------------------------------
-
-    recommendations.sort(
-        key=lambda item: item["score"],
-        reverse=True,
-    )
-
-    # -----------------------------------------------------
-    # G. Return Diverse Recommendations
-    # -----------------------------------------------------
-
-    return select_diverse_recommendations(
-        recommendations,
-        max_recommendations=max_recommendations,
-    )
+    recs.sort(key=lambda item: item["score"], reverse=True)
+    return select_diverse_recommendations(recs, max_recommendations)

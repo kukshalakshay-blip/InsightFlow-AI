@@ -377,9 +377,16 @@ def classify_column(
     if pd.api.types.is_bool_dtype(series):
         return "binary_category"
 
-    # 6. Binary categorical columns
+    # 6. Binary categorical columns. Text/bool two-state fields are categorical.
+    # For numeric fields, require a conventional 0/1 encoding or a flag-like name;
+    # two observed values alone are insufficient evidence (small samples happen).
     if is_binary_category(series):
         if not pd.api.types.is_numeric_dtype(series):
+            return "binary_category"
+        values = set(pd.to_numeric(series, errors="coerce").dropna().unique().tolist())
+        name = column_name.lower().strip()
+        flag_name = name.startswith(("is_", "has_", "was_", "active", "smoke", "alco", "gender"))
+        if values.issubset({0, 1}) or flag_name:
             return "binary_category"
 
     # 7. Datetime columns
