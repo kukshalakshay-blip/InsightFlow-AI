@@ -14,6 +14,62 @@ def _finite_numeric_values(series: pd.Series) -> pd.Series:
     finite_mask = np.isfinite(numeric.to_numpy(dtype=float, na_value=np.nan))
     return numeric.loc[finite_mask]
 
+
+
+def _is_continuous_measurement(series: pd.Series, column_name: object) -> bool:
+    """Return whether a numeric column is suitable for IQR screening.
+
+    Numeric storage does not imply a continuous measurement. Binary and
+    low-cardinality coded variables are treated as categorical unless the
+    column name provides a strong measurement hint.
+    """
+    if (
+        not pd.api.types.is_numeric_dtype(series)
+        or pd.api.types.is_bool_dtype(series)
+    ):
+        return False
+
+    values = _finite_numeric_values(series)
+    if values.empty or values.nunique() <= 2:
+        return False
+
+    name = str(column_name).strip().lower()
+    normalized = name.replace("-", "_").replace(" ", "_")
+    tokens = set(normalized.split("_"))
+
+    categorical_tokens = {
+        "active", "alcohol", "alco", "smoke", "smoking", "gluc",
+        "cholesterol", "gender", "sex", "status", "class", "grade",
+        "level", "category", "code", "flag", "indicator", "type",
+        "stage", "tier", "ordinal",
+    }
+    if tokens & categorical_tokens or any(
+        marker in normalized
+        for marker in ("cholesterol", "glucose_level", "smoking_status")
+    ):
+        return False
+
+    # These names strongly suggest measured quantities, even when rounded
+    # or represented by integer values.
+    continuous_tokens = {
+        "age", "height", "weight", "pressure", "ap_hi", "ap_lo",
+        "temperature", "temp", "price", "sales", "revenue", "amount",
+        "cost", "profit", "income", "distance", "duration", "bmi",
+        "salary", "volume", "quantity", "mass", "length", "width",
+    }
+    if tokens & continuous_tokens or normalized in {
+        "ap_hi", "ap_lo", "blood_pressure", "body_mass_index",
+    }:
+        return True
+
+    # Unlabelled integer codes with very few distinct values are more likely
+    # categorical than continuous. Keep the threshold conservative so
+    # ordinary rounded measurements and existing sales use cases survive.
+    if pd.api.types.is_integer_dtype(series) and values.nunique() <= 5:
+        return False
+
+    return True
+
 def summarize_loss_contributors(
     df: pd.DataFrame,
     profit_column: str = "profit",
@@ -669,10 +725,10 @@ def generate_business_recommendations(
         ):
             continue
 
-        if (
-            not pd.api.types.is_numeric_dtype(df[column])
-            or pd.api.types.is_bool_dtype(df[column])
-        ):
+        # Only apply IQR to plausible continuous measurements. Binary,
+        # ordinal and low-cardinality categorical codes are not outliers
+        # merely because their values fall outside an IQR fence.
+        if not _is_continuous_measurement(df[column], column):
             continue
 
         valid_values = _finite_numeric_values(df[column])
