@@ -1,6 +1,10 @@
 import streamlit as st
 
 from app.services.profiler import profile_dataset
+from app.assets.styles import load_custom_css
+
+# Load cinematic SaaS styling
+load_custom_css()
 
 
 st.title("Dataset Profile")

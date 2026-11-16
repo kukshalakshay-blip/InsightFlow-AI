@@ -20,6 +20,10 @@ from app.services.session_state import (
     reset_stale_ai_analysis,
     reset_stale_pdf_report,
 )
+from app.assets.styles import load_custom_css
+
+# Load cinematic SaaS styling
+load_custom_css()
 
 
 # ==========================================================

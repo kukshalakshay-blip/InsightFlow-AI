@@ -10,7 +10,11 @@ import streamlit as st
 from app.core.settings import settings
 from app.intelligence.dataset_understanding import understand_dataset
 from app.services.upload_service import process_uploaded_dataset
+from app.assets.ui_components import render_header, render_metric_card
+from app.assets.styles import load_custom_css
 
+# Load cinematic SaaS styling
+load_custom_css()
 MAX_UPLOAD_MB = settings.max_upload_mb
 SUPPORTED_TYPES = ["csv", "xlsx", "xls"]
 
@@ -75,8 +79,11 @@ def _render_dataset_understanding(signature: str) -> None:
                 st.rerun()
 
 
-st.title("Data Upload")
-st.markdown("Upload a CSV or Excel dataset to begin your analysis.")
+render_header(
+    title="Data Upload",
+    subtitle="Upload a CSV or Excel dataset to begin your analysis.",
+    badge="Secure Pipeline"
+)
 st.caption(f"Supported formats: CSV, XLSX and XLS · Maximum file size: {MAX_UPLOAD_MB} MB")
 
 uploaded_file = st.file_uploader(

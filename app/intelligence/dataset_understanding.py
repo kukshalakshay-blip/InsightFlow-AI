@@ -551,10 +551,12 @@ DATASET PROFILE:
             "Gemini returned an empty dataset understanding response."
         )
 
-    # Step 7: Strict local Pydantic validation
-    result = DatasetUnderstanding.model_validate_json(
-        output_text
-    )
+    # Step 7: Strict local Pydantic validation with domain normalization
+    data = json.loads(output_text)
+    if "domain" in data and isinstance(data["domain"], str):
+        data["domain"] = data["domain"].strip().lower().replace(" ", "_")
+        
+    result = DatasetUnderstanding.model_validate(data)
 
     # Step 8: Validate mapped column names
     valid_columns = {
