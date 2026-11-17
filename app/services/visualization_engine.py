@@ -7,7 +7,7 @@ import pandas as pd
 
 from app.services.column_intelligence import analyze_columns
 
-MEASURE_PRIORITY = ("price", "sales", "revenue", "profit", "amount", "value", "score", "rate", "cost", "quantity")
+MEASURE_PRIORITY = ("price", "sales", "revenue", "profit", "amount", "value", "score", "rate", "cost", "quantity", "score", "salary", "income")
 
 def _as_dict(value: Any) -> dict:
     if value is None:
@@ -35,8 +35,8 @@ def choose_best_measure(df: pd.DataFrame, measure_columns: list[str]) -> str | N
 def select_diverse_recommendations(recommendations: list[dict], max_recommendations: int) -> list[dict]:
     if max_recommendations <= 0:
         return []
-    # Expanded type limits to accommodate rich new charts while maintaining balance
-    type_limits = {"scatter": 3, "line": 2, "bar": 3, "histogram": 2, "map": 1, "box": 2, "heatmap": 1, "area": 2}
+    # Strict limits mapped to fully supported renderer types: scatter, histogram, bar, line, box, map
+    type_limits = {"scatter": 3, "line": 2, "bar": 3, "histogram": 2, "box": 2, "map": 1}
     selected, counts = [], {}
     seen_signatures = set()
     for index, recommendation in enumerate(recommendations):
@@ -95,7 +95,7 @@ def _semantic_columns(df: pd.DataFrame, understanding: Any) -> list[dict]:
 
 def recommend_visualizations(
     df: pd.DataFrame,
-    max_recommendations: int = 12,
+    max_recommendations: int = 10,
     understanding: Any = None,
 ) -> list[dict]:
     if max_recommendations <= 0 or not isinstance(df, pd.DataFrame) or df.empty:
@@ -131,7 +131,7 @@ def recommend_visualizations(
                 "reason": f"Compare variance, median benchmarks, and outliers of {best_measure} across {category}.",
                 "title": f"Distribution Spread of {best_measure} by {category}"
             })
-            break # Pick the primary category for deep box-plot analysis
+            break
 
     # 3. Category Comparisons (Bar Charts)
     for category in categories[:2]:
@@ -169,30 +169,15 @@ def recommend_visualizations(
                     "title": f"{y} vs {x} Relationship"
                 })
 
-    # 5. Temporal Trends (Line & Area charts for trajectory)
+    # 5. Temporal Trends (Line charts for trajectory)
     for date_column in dates:
         frequency = choose_time_frequency(df, date_column)
         for measure in measures[:2]:
-            # Standard Line Trend
             recs.append({
                 "type": "line", "x": date_column, "y": measure, "frequency": frequency, "aggregation": "mean",
                 "score": 0.90, "reason": f"Track periodic trajectory and average movement of {measure} over {date_column}.",
                 "title": f"{measure} Trend Over Time"
             })
-            # Cumulative Area Chart
-            recs.append({
-                "type": "area", "x": date_column, "y": measure, "frequency": frequency, "aggregation": "sum",
-                "score": 0.88, "reason": f"Evaluate cumulative volume growth of {measure} across timeline.",
-                "title": f"Cumulative Volume Growth of {measure}"
-            })
-
-    # 6. Correlation Heatmap (When multiple numeric measures exist)
-    if len(measures) >= 3:
-        recs.append({
-            "type": "heatmap", "columns": measures[:6], "score": 0.92,
-            "reason": "Examine multi-variable correlation matrix across all primary numeric metrics.",
-            "title": "Cross-Metric Correlation Matrix"
-        })
 
     if lats and lons:
         recs.append({

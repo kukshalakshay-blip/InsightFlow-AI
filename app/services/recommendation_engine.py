@@ -15,14 +15,8 @@ def _finite_numeric_values(series: pd.Series) -> pd.Series:
     return numeric.loc[finite_mask]
 
 
-
 def _is_continuous_measurement(series: pd.Series, column_name: object) -> bool:
-    """Return whether a numeric column is suitable for IQR screening.
-
-    Numeric storage does not imply a continuous measurement. Binary and
-    low-cardinality coded variables are treated as categorical unless the
-    column name provides a strong measurement hint.
-    """
+    """Return whether a numeric column is suitable for IQR screening."""
     if (
         not pd.api.types.is_numeric_dtype(series)
         or pd.api.types.is_bool_dtype(series)
@@ -43,145 +37,29 @@ def _is_continuous_measurement(series: pd.Series, column_name: object) -> bool:
         "level", "category", "code", "flag", "indicator", "type",
         "stage", "tier", "ordinal",
     }
-    if tokens & categorical_tokens or any(
-        marker in normalized
-        for marker in ("cholesterol", "glucose_level", "smoking_status")
-    ):
+    if tokens & categorical_tokens:
         return False
 
-    # These names strongly suggest measured quantities, even when rounded
-    # or represented by integer values.
     continuous_tokens = {
         "age", "height", "weight", "pressure", "ap_hi", "ap_lo",
         "temperature", "temp", "price", "sales", "revenue", "amount",
         "cost", "profit", "income", "distance", "duration", "bmi",
-        "salary", "volume", "quantity", "mass", "length", "width",
+        "salary", "volume", "quantity", "mass", "length", "width", "score", "rate",
     }
-    if tokens & continuous_tokens or normalized in {
-        "ap_hi", "ap_lo", "blood_pressure", "body_mass_index",
-    }:
+    if tokens & continuous_tokens:
         return True
 
-    # Unlabelled integer codes with very few distinct values are more likely
-    # categorical than continuous. Keep the threshold conservative so
-    # ordinary rounded measurements and existing sales use cases survive.
     if pd.api.types.is_integer_dtype(series) and values.nunique() <= 5:
         return False
 
     return True
 
-def summarize_loss_contributors(
-    df: pd.DataFrame,
-    profit_column: str = "profit",
-    grouping_columns: tuple[str, ...] = (
-        "category",
-        "sub_category",
-        "subcategory",
-        "region",
-    ),
-    top_n: int = 3,
-) -> list[str]:
-    """Summarize leading groups by total recorded negative profit.
-
-    Available grouping columns are analyzed independently. Missing columns
-    and missing group labels are skipped, so this helper also works with
-    datasets that do not contain a conventional retail schema.
-    """
-
-    if (
-        not isinstance(df, pd.DataFrame)
-        or profit_column not in df.columns
-        or not pd.api.types.is_numeric_dtype(df[profit_column])
-        or pd.api.types.is_bool_dtype(df[profit_column])
-        or top_n < 1
-    ):
-        return []
-
-    profit_values = pd.to_numeric(df[profit_column], errors="coerce")
-    profit_array = profit_values.to_numpy(dtype=float, na_value=np.nan)
-    loss_positions = np.flatnonzero(np.isfinite(profit_array) & (profit_array < 0))
-
-    if loss_positions.size == 0:
-        return []
-
-    loss_rows = df.iloc[loss_positions].copy()
-    loss_rows[profit_column] = profit_array[loss_positions]
-
-    details = []
-
-    for column in grouping_columns:
-        if column not in loss_rows.columns:
-            continue
-
-        # Exclude missing group labels instead of presenting them
-        # as a named category or region.
-        grouped_rows = loss_rows.loc[
-            loss_rows[column].notna()
-        ]
-
-        if grouped_rows.empty:
-            continue
-
-        summary = (
-            grouped_rows
-            .groupby(column, observed=True)[profit_column]
-            .agg(
-                loss_records=lambda values: int(
-                    (values < 0).sum()
-                ),
-                total_loss=lambda values: float(
-                    -values.sum()
-                ),
-            )
-            .reset_index()
-            .sort_values(
-                ["total_loss", "loss_records"],
-                ascending=[False, False],
-                kind="stable",
-            )
-            .head(top_n)
-        )
-
-        if summary.empty:
-            continue
-
-        group_details = "; ".join(
-            (
-                f"{row[column]}: "
-                f"{row['total_loss']:,.2f} in recorded losses "
-                f"across {int(row['loss_records']):,} records"
-            )
-            for _, row in summary.iterrows()
-        )
-
-        details.append(
-            f"Top {column} contributors: {group_details}."
-        )
-
-    return details
-
-# ==========================================================
-# RECOMMENDATION ENGINE
-# ==========================================================
 
 def generate_business_recommendations(
     df: pd.DataFrame,
     visualization_recommendations: list[dict],
 ) -> list[dict]:
-    """
-    Generate deterministic business recommendations
-    from a dataset and its analytical findings.
-
-    Each recommendation contains:
-    - rule_id
-    - category
-    - priority
-    - title
-    - finding
-    - action
-    - rationale
-    """
-
+    """Generate universal data quality and analytical recommendations for any domain."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return []
 
@@ -193,13 +71,9 @@ def generate_business_recommendations(
     # ======================================================
     # 1. DATA QUALITY: MISSING VALUES
     # ======================================================
-
     total_cells = df.size
-    missing_cells = int(
-        df.isna().sum().sum()
-    )
+    missing_cells = int(df.isna().sum().sum())
 
-    # Identify columns containing missing values.
     missing_by_column = (
         df.isna()
         .sum()
@@ -207,698 +81,125 @@ def generate_business_recommendations(
         .sort_values(ascending=False)
     )
 
-    # Calculate each affected column's missing-value percentage.
     missing_column_details = []
-
     for column, count in missing_by_column.items():
-        column_percentage = (
-            count / len(df)
-        ) * 100
-
+        column_percentage = (count / len(df)) * 100
         missing_column_details.append(
-            f"{column}: {count:,} "
-            f"({column_percentage:.2f}% of rows)"
+            f"{column}: {count:,} ({column_percentage:.2f}% of rows)"
         )
 
     if total_cells > 0 and missing_cells > 0:
+        missing_percentage = (missing_cells / total_cells) * 100
+        priority = "high" if missing_percentage >= 5 else "medium"
 
-        missing_percentage = (
-            missing_cells / total_cells
-        ) * 100
-
-        priority = (
-            "high"
-            if missing_percentage >= 5
-            else "medium"
-        )
-
-        recommendations.append(
-    {
-        "rule_id": "missing_data",
-        "category": "data_quality",
-        "priority": priority,
-        "title": "Investigate missing data",
-        "finding": (
-            f"The dataset contains {missing_cells:,} "
-            f"missing cells "
-            f"({missing_percentage:.2f}% of all cells). "
-            f"Affected columns: "
-            f"{'; '.join(missing_column_details)}."
-        ),
-        "action": (
-            "Identify the affected columns and determine "
-            "whether to correct, impute, or exclude "
-            "the affected values."
-        ),
-                "rationale": (
-                    "Missing values can reduce the reliability "
-                    "of statistical analysis and business decisions."
-                ),
-            }
-        )
+        recommendations.append({
+            "rule_id": "missing_data",
+            "category": "data_quality",
+            "priority": priority,
+            "title": "Investigate missing data points",
+            "finding": (
+                f"The dataset contains {missing_cells:,} missing cells "
+                f"({missing_percentage:.2f}% of all cells). Affected columns: "
+                f"{'; '.join(missing_column_details)}."
+            ),
+            "action": (
+                "Review affected columns to determine whether missing values "
+                "should be imputed, averaged, or excluded from specific calculations."
+            ),
+            "rationale": (
+                "Unaddressed missing values can skew aggregate calculations "
+                "and reduce analytical reliability."
+            ),
+        })
 
     # ======================================================
     # 2. DATA QUALITY: DUPLICATE ROWS
     # ======================================================
-
-    duplicate_count = int(
-        df.duplicated().sum()
-    )
-
+    duplicate_count = int(df.duplicated().sum())
     if duplicate_count > 0:
-
-        duplicate_percentage = (
-            duplicate_count / len(df)
-        ) * 100
-
-        recommendations.append(
-            {
-                "rule_id": "duplicate_rows",
-                "category": "data_quality",
-                "priority": (
-                    "high"
-                    if duplicate_percentage >= 5
-                    else "medium"
-                ),
-                "title": "Review duplicate records",
-                "finding": (
-                    f"The dataset contains {duplicate_count:,} "
-                    f"duplicate rows "
-                    f"({duplicate_percentage:.2f}% "
-                    f"of all records)."
-                ),
-                "action": (
-                    "Inspect duplicate rows and determine "
-                    "whether they represent accidental duplication "
-                    "or legitimate repeated events."
-                ),
-                "rationale": (
-                    "Unintended duplicates can inflate aggregate "
-                    "metrics and distort analytical results."
-                ),
-            }
-        )
+        duplicate_percentage = (duplicate_count / len(df)) * 100
+        recommendations.append({
+            "rule_id": "duplicate_rows",
+            "category": "data_quality",
+            "priority": "high" if duplicate_percentage >= 5 else "medium",
+            "title": "Review duplicate records",
+            "finding": (
+                f"The dataset contains {duplicate_count:,} duplicate rows "
+                f"({duplicate_percentage:.2f}% of all records)."
+            ),
+            "action": (
+                "Verify whether duplicate entries represent legitimate repeated "
+                "events or accidental data duplication."
+            ),
+            "rationale": (
+                "Unintentional duplicates inflate totals and distort overall percentages."
+            ),
+        })
 
     # ======================================================
-    # 3. PROFITABILITY: NEGATIVE PROFIT
+    # 3. DATA QUALITY: NUMERICAL OUTLIERS
     # ======================================================
-
-    profit_column = next(
-        (
-            column
-            for column in df.columns
-            if (
-                str(column).lower() == "profit"
-                and pd.api.types.is_numeric_dtype(df[column])
-                and not pd.api.types.is_bool_dtype(df[column])
-            )
-        ),
-        None,
-    )
-
-    consolidated_margin_columns = set()
-
-    if profit_column is not None:
-
-        profit_values = _finite_numeric_values(df[profit_column])
-
-        negative_profit_mask = profit_values < 0
-
-        negative_profit_count = int(
-            negative_profit_mask.sum()
-        )
-
-        # Sum the absolute values of negative profits.
-        total_recorded_losses = float(
-            -profit_values.loc[negative_profit_mask].sum()
-        )
-
-        loss_contributor_details = summarize_loss_contributors(
-            df,
-            profit_column=profit_column,
-        )
-
-        if negative_profit_count > 0:
-            negative_profit_percentage = (
-                negative_profit_count / len(profit_values)
-            ) * 100
-
-            # Identify margin columns with exactly the same
-            # negative-value records as the profit column.
-            matching_margin_columns = []
-
-            profit_numeric = pd.to_numeric(df[profit_column], errors="coerce")
-            profit_array = profit_numeric.to_numpy(dtype=float, na_value=np.nan)
-            profit_negative_mask = np.isfinite(profit_array) & (profit_array < 0)
-
-            for column in df.columns:
-                if (
-                    "margin" not in str(column).lower()
-                    or not pd.api.types.is_numeric_dtype(df[column])
-                    or pd.api.types.is_bool_dtype(df[column])
-                ):
-                    continue
-
-                margin_numeric = pd.to_numeric(df[column], errors="coerce")
-                margin_array = margin_numeric.to_numpy(dtype=float, na_value=np.nan)
-                margin_negative_mask = np.isfinite(margin_array) & (margin_array < 0)
-
-                if (
-                    margin_negative_mask.shape == profit_negative_mask.shape
-                    and (margin_negative_mask == profit_negative_mask).all()
-                ):
-                    matching_margin_columns.append(column)
-
-            consolidated_margin_columns.update(
-                matching_margin_columns
-            )
-
-            # Build one finding when both metrics flag
-            # exactly the same records.
-            if matching_margin_columns:
-                margin_details = []
-
-                for column in matching_margin_columns:
-                    margin_values = _finite_numeric_values(df[column])
-
-                    margin_count = int((margin_values < 0).sum())
-                    margin_percentage = (
-                        margin_count / len(margin_values) * 100
-                        if not margin_values.empty else 0.0
-                    )
-
-                    margin_details.append(
-                        f"{column}: {margin_count:,} negative records "
-                        f"({margin_percentage:.2f}% of valid records)"
-                    )
-
-                title = (
-                    "Investigate overlapping profitability losses"
-                )
-
-                finding = (
-                    f"{negative_profit_count:,} records have negative "
-                    f"profit ({negative_profit_percentage:.2f}% "
-                    f"of valid profit records), representing "
-                    f"{total_recorded_losses:,.2f} in total recorded losses. "
-                    f"The same records also have negative values in: "
-                    f"{'; '.join(margin_details)}."
-                )
-
-            else:
-                title = "Investigate loss-making records"
-
-                finding = (
-                    f"{negative_profit_count:,} records have "
-                    f"negative profit "
-                    f"({negative_profit_percentage:.2f}% "
-                    f"of valid profit records), representing "
-                    f"{total_recorded_losses:,.2f} "
-                    f"in total recorded losses."
-                )
-
-            if loss_contributor_details:
-                finding = (
-                    f"{finding} {' '.join(loss_contributor_details)}"
-                )
-
-            recommendations.append(
-                {
-                    "rule_id": "negative_profit",
-                    "category": "profitability",
-                    "priority": (
-                        "high"
-                        if negative_profit_percentage >= 10
-                        else "medium"
-                    ),
-                    "title": title,
-                    "finding": finding,
-                    "action": (
-                        "Investigate loss-making records by "
-                        "category, subcategory, product, customer segment, "
-                        "region, and discount level where available. "
-                        "Compare these patterns with sales, costs, and "
-                        "discounts before deciding on corrective action."
-                    ),
-                    "rationale": (
-                        "Understanding where losses occur can "
-                        "help identify opportunities for further "
-                        "profitability analysis."
-                    ),
-                }
-            )
-    # ======================================================
-    # 4. PROFITABILITY: NEGATIVE PROFIT MARGIN
-    # ======================================================
-
-    margin_columns = [
-        column
-        for column in df.columns
-        if (
-            "margin" in str(column).lower()
-            and pd.api.types.is_numeric_dtype(df[column])
-            and not pd.api.types.is_bool_dtype(df[column])
-        )
-    ]
-
-    for column in margin_columns:
-
-        if column in consolidated_margin_columns:
-            continue
-
-        margin_values = _finite_numeric_values(df[column])
-
-        if margin_values.empty:
-            continue
-
-        negative_margin_count = int(
-            (margin_values < 0).sum()
-        )
-
-        if negative_margin_count == 0:
-            continue
-
-        negative_margin_percentage = (
-            negative_margin_count
-            / len(margin_values)
-        ) * 100
-
-        recommendations.append(
-            {
-                "rule_id": f"negative_margin:{column}",
-                "category": "profitability",
-                "priority": (
-                    "high"
-                    if negative_margin_percentage >= 10
-                    else "medium"
-                ),
-                "title": (
-                    f"Investigate negative values in {column}"
-                ),
-                "finding": (
-                    f"{negative_margin_count:,} records have "
-                    f"negative values in {column} "
-                    f"({negative_margin_percentage:.2f}% "
-                    f"of valid records)."
-                ),
-                "action": (
-                    "Compare negative-margin records across "
-                    "relevant products, customer segments, "
-                    "regions, and discount levels where available."
-                ),
-                "rationale": (
-                    "Negative margin values identify records "
-                    "that warrant further investigation into "
-                    "profitability."
-                ),
-            }
-        )
-
-    # ======================================================
-    # 5. PROFITABILITY: DISCOUNT RELATIONSHIPS
-    # ======================================================
-
-    numeric_columns = [
-        column
-        for column in df.columns
-        if (
-            pd.api.types.is_numeric_dtype(df[column])
-            and not pd.api.types.is_bool_dtype(df[column])
-        )
-    ]
-
-    discount_columns = [
-        column
-        for column in numeric_columns
-        if "discount" in str(column).lower()
-    ]
-
-    # Restrict this rule to continuous profitability measures.
-    # Exclude binary indicators such as is_profitable.
-    profitability_columns = [
-        column
-        for column in numeric_columns
-        if (
-            str(column).lower() == "profit"
-            or "profit_margin" in str(column).lower()
-        )
-    ]
-
-    for discount_column in discount_columns:
-
-        for metric_column in profitability_columns:
-
-            if discount_column == metric_column:
-                continue
-
-            correlation = analyze_correlation(
-                df,
-                discount_column,
-                metric_column,
-            )
-
-            if correlation is None:
-                continue
-
-            if correlation > -0.60:
-                continue
-
-            recommendations.append(
-                {
-                    "rule_id": (
-                        f"discount_relationship:"
-                        f"{discount_column}:{metric_column}"
-                    ),
-                    "category": "profitability",
-                    "priority": "high",
-                    "title": (
-                        "Investigate discount-related "
-                        "profitability patterns"
-                    ),
-                    "finding": (
-                        f"{discount_column} and {metric_column} "
-                        f"have a strong negative correlation "
-                        f"({correlation:.2f})."
-                    ),
-                    "action": (
-                        "Compare discount levels and profitability "
-                        "across product categories, customer "
-                        "segments, and regions before changing "
-                        "discount policies."
-                    ),
-                    "rationale": (
-                        "The association warrants investigation, "
-                        "but correlation alone does not establish "
-                        "causation."
-                    ),
-                }
-            )
-
-    # ======================================================
-    # 6. SALES PERFORMANCE: DECLINING TRENDS
-    # ======================================================
-
-    for visualization in visualization_recommendations:
-
-        if not isinstance(visualization, dict):
-            continue
-
-        if visualization.get("type") != "line":
-            continue
-
-        x_column = visualization.get("x")
-        y_column = visualization.get("y")
-
-        if not x_column or not y_column:
-            continue
-
-        if x_column not in df.columns or y_column not in df.columns:
-            continue
-
-        metric_name = str(y_column).lower()
-
-        if not any(
-            keyword in metric_name
-            for keyword in ("sales", "revenue")
-        ):
-            continue
-
-        frequency = visualization.get(
-            "frequency",
-            "D",
-        )
-
-        trend_data = analyze_trend(
-            df,
-            x_column,
-            y_column,
-            frequency,
-        )
-
-        if len(trend_data) < 2 or y_column not in trend_data.columns:
-            continue
-
-        trend_values = _finite_numeric_values(trend_data[y_column])
-        if len(trend_values) < 2:
-            continue
-
-        first_value = float(trend_values.iloc[0])
-        last_value = float(trend_values.iloc[-1])
-
-        if first_value <= 0:
-            continue
-
-        percentage_change = (
-            (last_value - first_value)
-            / abs(first_value)
-        ) * 100
-
-        if percentage_change > -20:
-            continue
-
-        recommendations.append(
-            {
-                "rule_id": (
-                    f"declining_sales:{x_column}:{y_column}"
-                ),
-                "category": "sales_performance",
-                "priority": "high",
-                "title": "Investigate declining sales",
-                "finding": (
-                    f"Average {y_column} declined by "
-                    f"{abs(percentage_change):.1f}% between "
-                    f"the first and last observed time periods."
-                ),
-                "action": (
-                    "Examine sales across time periods, customer "
-                    "segments, product categories, and regions "
-                    "to determine where the decline is concentrated."
-                ),
-                "rationale": (
-                    "A substantial decline in the observed trend "
-                    "warrants investigation, but the trend alone "
-                    "does not explain its cause."
-                ),
-            }
-        )
-
-        # ======================================================
-    # 7. DATA QUALITY: NUMERICAL OUTLIERS
-    # ======================================================
-
-    excluded_columns = {
-        "id",
-        "row_id",
-        "postal_code",
-        "zip_code",
-        "order_year",
-        "order_month",
-        "order_quarter",
-    }
-
-    identifier_keywords = (
-        "identifier",
-        "customer_id",
-        "product_id",
-        "order_id",
-        "account_number",
-        "transaction_number",
-        "phone",
-    )
-
+    excluded_columns = {"id", "row_id", "postal_code", "zip_code"}
     outlier_findings = []
 
     for column in df.columns:
-
         column_name = str(column).lower().strip()
-
-        if column_name in excluded_columns:
-            continue
-
-        if (
-            column_name.endswith("_id")
-            or column_name.startswith("id_")
-            or any(
-                keyword in column_name
-                for keyword in identifier_keywords
-            )
-        ):
-            continue
-
-        # Only apply IQR to plausible continuous measurements. Binary,
-        # ordinal and low-cardinality categorical codes are not outliers
-        # merely because their values fall outside an IQR fence.
-        if not _is_continuous_measurement(df[column], column):
+        if column_name in excluded_columns or not _is_continuous_measurement(df[column], column):
             continue
 
         valid_values = _finite_numeric_values(df[column])
-
         if len(valid_values) < 10 or valid_values.nunique() < 2:
             continue
 
         result = detect_outliers(df, column)
-
         outlier_count = int(result["outlier_count"])
         outlier_percentage = float(result["outlier_percentage"])
 
-        lower_bound = result["lower_bound"]
-        upper_bound = result["upper_bound"]
-
         if outlier_count == 0 or outlier_percentage >= 25:
             continue
-
-        low_count = int((valid_values < lower_bound).sum())
-        high_count = int((valid_values > upper_bound).sum())
 
         outlier_findings.append({
             "column": column,
             "count": outlier_count,
             "percentage": outlier_percentage,
-            "low_count": low_count,
-            "high_count": high_count,
-            "lower_bound": lower_bound,
-            "upper_bound": upper_bound,
+            "lower_bound": result["lower_bound"],
+            "upper_bound": result["upper_bound"],
         })
 
-    # Rank by the proportion of valid records flagged.
-    # This is a screening priority, not a measure of business loss.
-    outlier_findings.sort(
-        key=lambda item: (
-            item["percentage"],
-            item["count"],
-        ),
-        reverse=True,
-    )
+    outlier_findings.sort(key=lambda item: item["percentage"], reverse=True)
 
-    # Keep individual recommendations for the strongest signals.
-    # Summarize remaining columns to reduce repetitive output.
-    individual_limit = 3
-
-    for item in outlier_findings[:individual_limit]:
-
+    for item in outlier_findings[:3]:
         column = item["column"]
-
-        priority = (
-            "medium"
-            if item["percentage"] >= 5
-            else "low"
-        )
-
+        priority = "medium" if item["percentage"] >= 5 else "low"
         recommendations.append({
             "rule_id": f"numerical_outliers:{column}",
             "category": "data_quality",
             "priority": priority,
-            "title": f"Review statistically unusual values in {column}",
+            "title": f"Review statistical outliers in {column}",
             "finding": (
-                f"IQR outlier detection identified "
-                f"{item['count']:,} outlier(s) in '{column}' "
-                f"({item['percentage']:.2f}% of valid records): "
-                f"{item['low_count']:,} below the lower bound "
-                f"({item['lower_bound']:.4g}) and "
-                f"{item['high_count']:,} above the upper bound "
-                f"({item['upper_bound']:.4g})."
+                f"IQR detection identified {item['count']:,} outlier records in '{column}' "
+                f"({item['percentage']:.2f}% of valid records falling outside bounds "
+                f"{item['lower_bound']:.4g} to {item['upper_bound']:.4g})."
             ),
             "action": (
-                f"Inspect the flagged records in '{column}' and "
-                "compare them with relevant business context. "
-                "Determine whether they are legitimate extremes, "
-                "data-quality issues, or a distinct subgroup."
-            ),
-                    "rationale": (
-            "IQR detection identifies statistical extremes, "
-            "not necessarily errors or business-rule violations. "
-            "Some observations may overlap with other business "
-            "findings, so review related recommendations together."
-        ),
-        })
-
-    remaining_findings = outlier_findings[individual_limit:]
-
-    if remaining_findings:
-
-        summary_details = "; ".join(
-            (
-                f"{item['column']}: {item['count']:,} records "
-                f"({item['percentage']:.2f}%)"
-            )
-            for item in remaining_findings
-        )
-
-        recommendations.append({
-            "rule_id": "numerical_outliers:summary",
-            "category": "data_quality",
-            "priority": "low",
-            "title": "Review unusual values across additional measures",
-            "finding": (
-                f"IQR screening identified unusual values in "
-                f"{len(remaining_findings)} additional columns: "
-                f"{summary_details}."
-            ),
-            "action": (
-                "Review these columns together and investigate "
-                "the observations with the greatest relevance "
-                "to the analysis."
+                f"Inspect flagged values in '{column}' to confirm whether they represent "
+                "legitimate extreme extremes or data entry anomalies."
             ),
             "rationale": (
-                "Grouping additional outlier findings reduces "
-                "repetition while preserving the evidence needed "
-                "to decide which observations merit investigation."
+                "Statistical outliers highlight variance extremes that warrant context evaluation."
             ),
         })
-    # ======================================================
-    # 8. DEDUPLICATE RECOMMENDATIONS
-    # ======================================================
 
+    # Deduplicate and sort recommendations
     unique_recommendations = []
     seen_rule_ids = set()
-
-    for recommendation in recommendations:
-
-        rule_id = recommendation["rule_id"]
-
-        if rule_id in seen_rule_ids:
+    for rec in recommendations:
+        if rec["rule_id"] in seen_rule_ids:
             continue
+        seen_rule_ids.add(rec["rule_id"])
+        unique_recommendations.append(rec)
 
-        seen_rule_ids.add(rule_id)
-
-        unique_recommendations.append(
-            recommendation
-        )
-
-        # ======================================================
-    # 9. PRIORITIZE RECOMMENDATIONS
-    # ======================================================
-
-    priority_order = {
-        "high": 0,
-        "medium": 1,
-        "low": 2,
-    }
-
-    # Secondary ordering reflects the type of finding,
-    # not a claim that unlike statistical measures are comparable.
-    rule_order = {
-        "missing_data": 0,
-        "duplicate_rows": 1,
-        "negative_profit": 2,
-        "negative_margin": 3,
-        "discount_relationship": 4,
-        "declining_sales": 5,
-        "numerical_outliers": 6,
-    }
-
-    def recommendation_sort_key(item):
-        rule_id = item.get("rule_id", "")
-        rule_family = rule_id.split(":")[0]
-
-        return (
-            priority_order.get(item.get("priority"), 3),
-            rule_order.get(rule_family, 99),
-            rule_id,
-        )
-
-    unique_recommendations.sort(
-        key=recommendation_sort_key
-    )
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    unique_recommendations.sort(key=lambda x: priority_order.get(x.get("priority"), 3))
 
     return unique_recommendations

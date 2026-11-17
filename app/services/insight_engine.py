@@ -80,7 +80,7 @@ def generate_insight(
     chart_type = recommendation.get("type", "unknown")
 
     # ==================================================
-    # 1. SCATTER PLOT (Relationships & Drivers)
+    # 1. SCATTER PLOT
     # ==================================================
     if chart_type == "scatter":
         x_column = recommendation["x"]
@@ -101,7 +101,7 @@ def generate_insight(
         )
 
     # ==================================================
-    # 2. HISTOGRAM (Metric Spread & Distribution)
+    # 2. HISTOGRAM
     # ==================================================
     if chart_type == "histogram":
         column = recommendation["column"]
@@ -119,7 +119,7 @@ def generate_insight(
         )
 
     # ==================================================
-    # 3. BAR CHART (Categorical & Segment Breakdowns)
+    # 3. BAR CHART
     # ==================================================
     if chart_type == "bar":
         column = recommendation["column"]
@@ -151,7 +151,7 @@ def generate_insight(
             )
 
     # ==================================================
-    # 4. LINE CHART (Temporal & Trend Evolution)
+    # 4. LINE CHART
     # ==================================================
     if chart_type == "line":
         x_column = recommendation["x"]
@@ -178,7 +178,18 @@ def generate_insight(
         )
 
     # ==================================================
-    # 5. MAP (Geographic Distribution)
+    # 5. BOX PLOT
+    # ==================================================
+    if chart_type == "box":
+        x_col = recommendation.get("x")
+        y_col = recommendation.get("y")
+        return (
+            f"**Variance & Spread ({y_col} across {x_col})**: Compares quartile distribution ranges, "
+            f"median benchmarks, and potential outlier boundaries across different categories."
+        )
+
+    # ==================================================
+    # 6. MAP
     # ==================================================
     if chart_type == "map":
         return "**Geographic Spread**: Visualizes spatial concentrations and regional distribution density across coordinates."
