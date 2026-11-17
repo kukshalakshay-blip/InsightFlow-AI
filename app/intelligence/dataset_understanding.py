@@ -42,6 +42,9 @@ DomainName = Literal[
     "logistics",
     "social_sciences",
     "technology",
+    "agriculture",
+    "retail",
+    "energy",
     "general",
     "uncertain",
 ]

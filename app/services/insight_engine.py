@@ -168,10 +168,16 @@ def generate_insight(
         else:
             direction = "neutral"
 
+        trend_description = (
+            "grow tightly together in a predictable pattern" if correlation > 0 
+            else "move in opposite directions"
+        )
+        if absolute_correlation < 0.3:
+            trend_description = "show little to no direct connection"
+
         return (
-            f"{x_column} and {y_column} show a "
-            f"{strength} {direction} relationship "
-            f"(correlation: {correlation:.2f})."
+            f"**{x_column} and {y_column}**: {x_column} and {y_column} "
+            f"{trend_description} (overall strength: {strength})."
         )
 
     # ==================================================
@@ -211,9 +217,9 @@ def generate_insight(
             distribution_note = "The mean and median are relatively close, indicating relatively low skewness."
 
         return (
-            f"The distribution of {column} has a mean of "
-            f"{mean:,.2f} and a median of {median:,.2f}. "
-            f"{distribution_note}"
+            f"**{column} Distribution**: Most values for {column} cluster around "
+            f"an average of {mean:,.2f} (midpoint/median is {median:,.2f}), "
+            f"giving a clear picture of typical values in your dataset."
         )
 
     # 3. BAR CHART
