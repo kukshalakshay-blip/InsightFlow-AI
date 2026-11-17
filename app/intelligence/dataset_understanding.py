@@ -30,24 +30,7 @@ logger = logging.getLogger(__name__)
 # 1. Supported semantic categories
 # =========================================================
 
-DomainName = Literal[
-    "commerce",
-    "finance",
-    "healthcare",
-    "marketing",
-    "customer_analytics",
-    "operations",
-    "education",
-    "real_estate",
-    "logistics",
-    "social_sciences",
-    "technology",
-    "agriculture",
-    "retail",
-    "energy",
-    "general",
-    "uncertain",
-]
+DomainName = str
 
 DataRole = Literal[
     "continuous",
